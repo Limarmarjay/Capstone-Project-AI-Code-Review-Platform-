@@ -12,7 +12,7 @@ class ScanError(Exception):
 SEVERITY_MAP = {
     "HIGH": "high",
     "MEDIUM": "medium",
-    "LOW": "low",
+    "LOW": "info",
 }
 
 def _run_bandit(file_path: str) -> dict:
@@ -98,9 +98,11 @@ def scan_python_file(file_path: str) -> dict:
     findings = []
 
     severity_counts = {
+        # Bandit has no CRITICAL tier.
+        # Critical severity is assigned later during combined review.
+        "critical": 0,
         "high": 0,
         "medium": 0,
-        "low": 0,
         "info": 0,
     }
 
