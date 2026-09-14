@@ -1,0 +1,4 @@
+# Core module runs on the standard library only (offline mock LLM).
+# Install these only for the real LLM path and pytest:
+anthropic>=0.39.0
+pytest>=8.0.0

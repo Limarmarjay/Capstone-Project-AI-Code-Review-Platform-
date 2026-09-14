@@ -1,0 +1,43 @@
+{
+  "submission_id": "sub_001",
+  "source_type": "pull_request",
+  "repository": "Limarmarjay/example-repo",
+  "redaction_applied": true,
+  "files": [
+    {
+      "file_path": "src/auth/login.py",
+      "language": "python",
+      "hunks": [
+        {
+          "hunk_id": "h1",
+          "start_line": 42,
+          "end_line": 48,
+          "diff": "@@ -42,4 +42,7 @@\n+def login(user, pwd):\n+    conn = db.connect(password=\"[REDACTED]\")\n+    return conn.query(f\"SELECT * FROM users WHERE name={user}\")",
+          "added_lines": [43, 44, 45],
+          "removed_lines": [],
+          "context_lines": [42, 46]
+        }
+      ],
+      "static_findings": [
+        {
+          "finding_id": "sf_001",
+          "tool": "pylint",
+          "rule_id": "W0611",
+          "category": "code_smell",
+          "message": "Unused import 'os'",
+          "file_path": "src/auth/login.py",
+          "line": 12
+        },
+        {
+          "finding_id": "sf_002",
+          "tool": "bandit",
+          "rule_id": "B608",
+          "category": "security",
+          "message": "Possible SQL injection via string formatting",
+          "file_path": "src/auth/login.py",
+          "line": 45
+        }
+      ]
+    }
+  ]
+}
