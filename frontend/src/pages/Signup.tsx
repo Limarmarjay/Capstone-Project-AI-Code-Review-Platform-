@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { FormEvent } from 'react'
+import type { SubmitEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { signup } from '../api'
 import { useAuth } from '../AuthContext'
@@ -11,7 +11,7 @@ function Signup() {
   const { setSession } = useAuth()
   const navigate = useNavigate()
 
-  const handleSubmit = async (event: FormEvent) => {
+  const handleSubmit = async (event: SubmitEvent) => {
     event.preventDefault()
     setError(null)
     try {
