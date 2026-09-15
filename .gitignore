@@ -3,3 +3,10 @@ backend/__pycache__/
 backend/**/__pycache__/
 *.pyc
 .DS_Store
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.env
+.env.*
+!.env.example

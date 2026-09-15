@@ -1,0 +1,52 @@
+{
+  "submission_id": "sub_001",
+  "review_status": "completed",
+  "llm_status": "success",
+  "overall_score": 37,
+  "summary": "3 issue(s): 1 critical, 1 high, 1 low.",
+  "findings": [
+    {
+      "finding_id": "f_f0f23530",
+      "source": "combined",
+      "category": "security",
+      "severity": "critical",
+      "severity_level": 4,
+      "file_path": "src/auth/login.py",
+      "line": 45,
+      "title": "Possible SQL injection in query",
+      "explanation": "User input appears to be interpolated into the SQL string, which allows injection.",
+      "suggested_fix": "Use a parameterized query with placeholders instead of string interpolation.",
+      "static_finding_ids": [
+        "sf_002"
+      ]
+    },
+    {
+      "finding_id": "f_ab66e4c7",
+      "source": "llm",
+      "category": "bug",
+      "severity": "high",
+      "severity_level": 3,
+      "file_path": "src/auth/login.py",
+      "line": 44,
+      "title": "Missing error handling on connection",
+      "explanation": "The connection call can raise; there is no try/except, so a failure crashes the request.",
+      "suggested_fix": "Wrap the connection in try/except and return a handled error.",
+      "static_finding_ids": []
+    },
+    {
+      "finding_id": "f_4df4b080",
+      "source": "static",
+      "category": "code_smell",
+      "severity": "low",
+      "severity_level": 1,
+      "file_path": "src/auth/login.py",
+      "line": 12,
+      "title": "pylint: W0611",
+      "explanation": "Unused import 'os'",
+      "suggested_fix": "",
+      "static_finding_ids": [
+        "sf_001"
+      ]
+    }
+  ]
+}
