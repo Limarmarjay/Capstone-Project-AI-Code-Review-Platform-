@@ -1,6 +1,14 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
-import { createSubmission } from '../api'
+import {
+  createSubmission,
+  getGithubConnectUrl,
+  getGithubStatus,
+  listGithubPulls,
+  listGithubRepos,
+  submitPullRequest,
+} from '../api'
+import type { GithubPullRequest, GithubRepo } from '../api'
 import { useAuth } from '../AuthContext'
 import '../App.css'
 
@@ -67,6 +75,113 @@ function FileUploadField({ label, accept, submissionType, token }: FileUploadFie
   )
 }
 
+function GithubConnect({ token }: { token: string }) {
+  const [connected, setConnected] = useState<boolean | null>(null)
+  const [repos, setRepos] = useState<GithubRepo[]>([])
+  const [pulls, setPulls] = useState<GithubPullRequest[]>([])
+  const [selectedRepo, setSelectedRepo] = useState('')
+  const [selectedPullNumber, setSelectedPullNumber] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [submitted, setSubmitted] = useState(false)
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.has('github_connected') || params.has('github_error')) {
+      window.history.replaceState({}, '', window.location.pathname)
+    }
+
+    getGithubStatus(token)
+      .then((res) => setConnected(res.connected))
+      .catch(() => setConnected(false))
+  }, [token])
+
+  useEffect(() => {
+    if (!connected) return
+    listGithubRepos(token)
+      .then(setRepos)
+      .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load repos.'))
+  }, [connected, token])
+
+  const handleRepoChange = (event: ChangeEvent<HTMLSelectElement>) => {
+    const repo = event.target.value
+    setSelectedRepo(repo)
+    setSelectedPullNumber('')
+    setPulls([])
+    if (!repo) return
+
+    listGithubPulls(token, repo)
+      .then(setPulls)
+      .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load pull requests.'))
+  }
+
+  const handleSubmit = async () => {
+    const pull = pulls.find((p) => String(p.number) === selectedPullNumber)
+    if (!pull) return
+
+    setError(null)
+    try {
+      await submitPullRequest(token, selectedRepo, pull)
+      setSubmitted(true)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to submit pull request.')
+    }
+  }
+
+  if (connected === null) return null
+
+  if (!connected) {
+    return (
+      <div className="upload-field">
+        <a className="upload-button" href={getGithubConnectUrl(token)}>
+          Connect GitHub
+        </a>
+      </div>
+    )
+  }
+
+  return (
+    <div className="github-section">
+      <label>
+        Repository
+        <select value={selectedRepo} onChange={handleRepoChange}>
+          <option value="">Select a repository…</option>
+          {repos.map((repo) => (
+            <option key={repo.id} value={repo.full_name}>
+              {repo.full_name}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      {selectedRepo && (
+        <label>
+          Pull Request
+          <select
+            value={selectedPullNumber}
+            onChange={(e) => setSelectedPullNumber(e.target.value)}
+          >
+            <option value="">Select a pull request…</option>
+            {pulls.map((pull) => (
+              <option key={pull.id} value={pull.number}>
+                #{pull.number} {pull.title}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+
+      {selectedPullNumber && (
+        <button type="button" className="upload-button" onClick={handleSubmit}>
+          Submit for Review
+        </button>
+      )}
+
+      {submitted && <p className="upload-filename">Pull request submitted for review.</p>}
+      {error && <p className="upload-error">{error}</p>}
+    </div>
+  )
+}
+
 function Dashboard() {
   const { user, token, logout } = useAuth()
 
@@ -100,6 +215,7 @@ function Dashboard() {
             submissionType="diff"
             token={token}
           />
+          <GithubConnect token={token} />
         </div>
       </main>
     </div>

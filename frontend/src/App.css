@@ -51,6 +51,34 @@
   border-color: #888;
 }
 
+a.upload-button {
+  display: inline-block;
+  text-decoration: none;
+  text-align: center;
+  width: fit-content;
+}
+
+.github-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.github-section label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.9rem;
+}
+
+.github-section select {
+  padding: 0.5rem;
+  border: 1px solid #444;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+}
+
 .upload-filename {
   font-size: 0.85rem;
   color: #9ad19a;

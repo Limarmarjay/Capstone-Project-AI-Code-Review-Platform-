@@ -2,7 +2,23 @@
 expensive) diff parsing and AI review steps run."""
 from __future__ import annotations
 
+from .models import FileDiff
+
 MAX_RAW_DIFF_BYTES = 5 * 1024 * 1024  # 5 MB
+
+
+def validate_python_only(files: list[FileDiff]) -> str | None:
+    """
+    This platform only reviews Python code. Returns an error message if the
+    diff touches any non-Python file, or None if every file is a '.py' file.
+    """
+    non_python = sorted({f.path for f in files if f.extension != "py"})
+    if not non_python:
+        return None
+    shown = non_python[:10]
+    remainder = len(non_python) - len(shown)
+    listed = ", ".join(shown) + (f", and {remainder} more" if remainder else "")
+    return f"Only Python (.py) files are supported. Found non-Python file(s): {listed}"
 
 
 def validate_input(diff_text: str) -> str | None:
