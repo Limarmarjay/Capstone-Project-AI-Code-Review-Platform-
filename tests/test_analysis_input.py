@@ -5,9 +5,11 @@ import pytest
 
 from backend.services.analysis_input import (
     bandit_finding_to_static_finding,
+    parsed_hunk_to_review_hunk,
     scan_python_file_to_static_findings,
 )
 from backend.services.bandit_scanner import ScanError
+from repo_diff_pipeline.models import DiffLine, Hunk
 
 
 
@@ -57,3 +59,58 @@ def test_unparseable_file_raises_instead_of_returning_empty():
             "samples/broken.py",
             "src/broken.py",
         )
+
+
+def test_parsed_hunk_converts_to_review_hunk():
+    hunk = Hunk(
+        source_start=10,
+        source_length=2,
+        target_start=10,
+        target_length=3,
+        lines=[
+            DiffLine(
+                line_type="context",
+                content="def example():",
+                source_line_no=10,
+                target_line_no=10,
+            ),
+            DiffLine(
+                line_type="del",
+                content='    password = "old_secret"',
+                source_line_no=11,
+                target_line_no=None,
+            ),
+            DiffLine(
+                line_type="add",
+                content='    password = "new_secret"',
+                source_line_no=None,
+                target_line_no=11,
+            ),
+            DiffLine(
+                line_type="add",
+                content="    return True",
+                source_line_no=None,
+                target_line_no=12,
+            ),
+        ],
+    )
+
+    result = parsed_hunk_to_review_hunk(hunk, "h1")
+
+    assert result["hunk_id"] == "h1"
+    assert result["start_line"] == 10
+    assert result["end_line"] == 12
+
+    assert result["added_lines"] == [11, 12]
+    assert result["removed_lines"] == [11]
+    assert result["context_lines"] == [10]
+
+    assert result["diff"].startswith("@@ -10,2 +10,3 @@")
+
+    assert "old_secret" not in result["diff"]
+    assert "new_secret" not in result["diff"]
+    assert result["diff"].count("<REDACTED_SECRET>") == 2
+
+    assert '-    password = "<REDACTED_SECRET>"' in result["diff"]
+    assert '+    password = "<REDACTED_SECRET>"' in result["diff"]
+    
