@@ -1,7 +1,14 @@
-from backend.services.bandit_scanner import scan_python_file
+from dataclasses import asdict
+from pathlib import Path
+
+from backend.services.bandit_scanner import ScanError, scan_python_file
 from backend.services.redactor import redact_findings, redact_text
 from llm_review.types import StaticFinding
-from repo_diff_pipeline.models import Hunk as ParsedHunk
+from repo_diff_pipeline.models import (
+    ChangeType,
+    FileDiff,
+    Hunk as ParsedHunk,
+)
 
 
 def bandit_finding_to_static_finding(
@@ -77,4 +84,48 @@ def parsed_hunk_to_review_hunk(
         "added_lines": added_lines,
         "removed_lines": removed_lines,
         "context_lines": context_lines,
+    }
+
+
+def build_review_file(
+    file_diff: FileDiff,
+    repo_path: str | None,
+) -> dict:
+    static_findings: list[StaticFinding] = []
+
+    can_scan = (
+        repo_path is not None
+        and not file_diff.is_binary
+        and file_diff.extension == "py"
+        and file_diff.change_type is not ChangeType.DELETED
+    )
+
+    if can_scan:
+        repo_root = Path(repo_path).resolve()
+        scan_path = (repo_root / file_diff.path).resolve()
+
+        if not scan_path.is_relative_to(repo_root):
+            raise ScanError("File path is outside the repository.")
+
+        static_findings = scan_python_file_to_static_findings(
+            str(scan_path),
+            file_diff.path,
+        )
+
+    hunks = [
+        parsed_hunk_to_review_hunk(
+            hunk,
+            f"h{index}",
+        )
+        for index, hunk in enumerate(file_diff.hunks, start=1)
+    ]
+
+    return {
+        "file_path": file_diff.path,
+        "language": "python" if file_diff.extension == "py" else file_diff.extension,
+        "hunks": hunks,
+        "static_findings": [
+            asdict(finding)
+            for finding in static_findings
+        ],
     }

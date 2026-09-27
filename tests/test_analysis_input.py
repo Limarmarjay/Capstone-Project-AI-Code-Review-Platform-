@@ -5,11 +5,17 @@ import pytest
 
 from backend.services.analysis_input import (
     bandit_finding_to_static_finding,
+    build_review_file,
     parsed_hunk_to_review_hunk,
     scan_python_file_to_static_findings,
 )
 from backend.services.bandit_scanner import ScanError
-from repo_diff_pipeline.models import DiffLine, Hunk
+from repo_diff_pipeline.models import (
+    ChangeType,
+    DiffLine,
+    FileDiff,
+    Hunk,
+)
 
 
 
@@ -113,4 +119,67 @@ def test_parsed_hunk_converts_to_review_hunk():
 
     assert '-    password = "<REDACTED_SECRET>"' in result["diff"]
     assert '+    password = "<REDACTED_SECRET>"' in result["diff"]
-    
+
+
+def test_build_review_file_combines_hunks_and_static_findings():
+    file_diff = FileDiff(
+        path="samples/vulnerable.py",
+        change_type=ChangeType.MODIFIED,
+        hunks=[
+            Hunk(
+                source_start=1,
+                source_length=2,
+                target_start=1,
+                target_length=2,
+                lines=[
+                    DiffLine(
+                        line_type="context",
+                        content="import subprocess",
+                        source_line_no=1,
+                        target_line_no=1,
+                    ),
+                    DiffLine(
+                        line_type="add",
+                        content='password = "super_secret_password"',
+                        source_line_no=None,
+                        target_line_no=2,
+                    ),
+                ],
+            )
+        ],
+    )
+
+    result = build_review_file(
+        file_diff,
+        ".",
+    )
+
+    assert result["file_path"] == "samples/vulnerable.py"
+    assert result["language"] == "python"
+
+    assert len(result["hunks"]) == 1
+    assert len(result["static_findings"]) == 3
+
+    serialized = json.dumps(result)
+
+    assert "super_secret_password" not in serialized
+    assert "<REDACTED_SECRET>" in serialized
+
+    assert any(
+        finding["rule_id"] == "B602"
+        for finding in result["static_findings"]
+    )
+
+
+def test_path_outside_repo_is_rejected():
+    file_diff = FileDiff(
+        path="../outside.py",
+        change_type=ChangeType.MODIFIED,
+        hunks=[],
+    )
+
+    with pytest.raises(ScanError, match="outside the repository"):
+        build_review_file(
+            file_diff,
+            "samples",
+        )
