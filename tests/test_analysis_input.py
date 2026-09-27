@@ -19,6 +19,8 @@ from repo_diff_pipeline.models import (
     ParsedDiff,
 )
 
+from llm_review.types import AnalysisInput
+
 
 def test_bandit_finding_converts_to_static_finding():
     finding = {
@@ -248,3 +250,88 @@ def test_build_analysis_input_records_when_static_analysis_is_skipped():
     assert scan_issues["src/example.py"] == (
         "Static analysis not run: full file not available."
     )
+
+
+def test_built_analysis_input_matches_llm_contract():
+    parsed_diff = ParsedDiff(
+        files=[
+            FileDiff(
+                path="samples/vulnerable.py",
+                change_type=ChangeType.MODIFIED,
+                hunks=[
+                    Hunk(
+                        source_start=1,
+                        source_length=2,
+                        target_start=1,
+                        target_length=2,
+                        lines=[
+                            DiffLine(
+                                line_type="context",
+                                content="import subprocess",
+                                source_line_no=1,
+                                target_line_no=1,
+                            ),
+                            DiffLine(
+                                line_type="add",
+                                content='password = "super_secret_password"',
+                                source_line_no=None,
+                                target_line_no=2,
+                            ),
+                        ],
+                    )
+                ],
+            )
+        ]
+    )
+
+    analysis_input, scan_issues = build_analysis_input(
+        parsed_diff,
+        ".",
+        submission_id="sub_contract",
+        source_type="git_diff",
+        repository="example/repo",
+    )
+
+    parsed = AnalysisInput.from_dict(analysis_input)
+
+    assert parsed.submission_id == "sub_contract"
+    assert parsed.source_type == "git_diff"
+    assert parsed.repository == "example/repo"
+    assert parsed.redaction_applied is True
+    assert scan_issues == {}
+
+    parsed_file = parsed.files[0]
+
+    assert parsed_file.file_path == "samples/vulnerable.py"
+    assert parsed_file.language == "python"
+
+    assert len(parsed_file.hunks) == 1
+
+    hunk = parsed_file.hunks[0]
+
+    assert hunk.hunk_id == "h1"
+    assert hunk.start_line == 1
+    assert hunk.end_line == 2
+    assert hunk.added_lines == [2]
+    assert hunk.context_lines == [1]
+    assert "<REDACTED_SECRET>" in hunk.diff
+    assert "super_secret_password" not in hunk.diff
+
+    assert len(parsed_file.static_findings) == 3
+
+    raw_b602 = next(
+        finding
+        for finding in analysis_input["files"][0]["static_findings"]
+        if finding["rule_id"] == "B602"
+    )
+
+    parsed_b602 = next(
+        finding
+        for finding in parsed_file.static_findings
+        if finding.rule_id == "B602"
+    )
+
+    assert parsed_b602.finding_id == raw_b602["finding_id"]
+    assert parsed_b602.line == raw_b602["line"]
+    assert parsed_b602.file_path == raw_b602["file_path"]
+    assert parsed_b602.message == raw_b602["message"]
