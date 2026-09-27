@@ -8,6 +8,7 @@ from repo_diff_pipeline.models import (
     ChangeType,
     FileDiff,
     Hunk as ParsedHunk,
+    ParsedDiff,
 )
 
 
@@ -129,3 +130,55 @@ def build_review_file(
             for finding in static_findings
         ],
     }
+
+
+def build_analysis_input(
+    parsed_diff: ParsedDiff,
+    repo_path: str | None,
+    *,
+    submission_id: str,
+    source_type: str,
+    repository: str,
+) -> tuple[dict, dict[str, str]]:
+    review_files = []
+    scan_issues: dict[str, str] = {}
+
+    for file_diff in parsed_diff.files:
+        should_scan_python = (
+            file_diff.extension == "py"
+            and not file_diff.is_binary
+            and file_diff.change_type is not ChangeType.DELETED
+        )
+
+        if should_scan_python and repo_path is None:
+            scan_issues[file_diff.path] = (
+                "Static analysis not run: full file not available."
+            )
+
+        try:
+            review_file = build_review_file(
+                file_diff,
+                repo_path,
+            )
+        except ScanError as exc:
+            scan_issues[file_diff.path] = str(exc)
+
+            # Keep the file and its redacted hunks without retrying Bandit.
+            review_file = build_review_file(
+                file_diff,
+                None,
+            )
+
+        review_files.append(review_file)
+
+    analysis_input = {
+        "submission_id": submission_id,
+        "source_type": source_type,
+        "repository": repository,
+        "redaction_applied": True,
+        "files": review_files,
+    }
+
+    return analysis_input, scan_issues
+
+

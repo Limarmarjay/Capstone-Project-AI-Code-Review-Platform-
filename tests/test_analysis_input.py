@@ -5,6 +5,7 @@ import pytest
 
 from backend.services.analysis_input import (
     bandit_finding_to_static_finding,
+    build_analysis_input,
     build_review_file,
     parsed_hunk_to_review_hunk,
     scan_python_file_to_static_findings,
@@ -15,8 +16,8 @@ from repo_diff_pipeline.models import (
     DiffLine,
     FileDiff,
     Hunk,
+    ParsedDiff,
 )
-
 
 
 def test_bandit_finding_converts_to_static_finding():
@@ -183,3 +184,67 @@ def test_path_outside_repo_is_rejected():
             file_diff,
             "samples",
         )
+
+
+def test_build_analysis_input_continues_after_file_scan_error():
+    parsed_diff = ParsedDiff(
+        files=[
+            FileDiff(
+                path="samples/vulnerable.py",
+                change_type=ChangeType.MODIFIED,
+                hunks=[],
+            ),
+            FileDiff(
+                path="samples/broken.py",
+                change_type=ChangeType.MODIFIED,
+                hunks=[],
+            ),
+        ]
+    )
+
+    analysis_input, scan_issues = build_analysis_input(
+        parsed_diff,
+        ".",
+        submission_id="sub_test",
+        source_type="git_diff",
+        repository="example/repo",
+    )
+
+    assert analysis_input["redaction_applied"] is True
+    assert len(analysis_input["files"]) == 2
+
+    vulnerable_file = analysis_input["files"][0]
+    broken_file = analysis_input["files"][1]
+
+    assert len(vulnerable_file["static_findings"]) == 3
+    assert broken_file["static_findings"] == []
+
+    assert scan_issues["samples/broken.py"] == "File could not be analyzed."
+
+    serialized = json.dumps(analysis_input)
+    assert "super_secret_password" not in serialized
+
+
+def test_build_analysis_input_records_when_static_analysis_is_skipped():
+    parsed_diff = ParsedDiff(
+        files=[
+            FileDiff(
+                path="src/example.py",
+                change_type=ChangeType.MODIFIED,
+                hunks=[],
+            )
+        ]
+    )
+
+    analysis_input, scan_issues = build_analysis_input(
+        parsed_diff,
+        None,
+        submission_id="sub_patch",
+        source_type="patch_file",
+        repository="<patch-file>",
+    )
+
+    assert analysis_input["files"][0]["static_findings"] == []
+    assert scan_issues["src/example.py"] == (
+        "Static analysis not run: full file not available."
+    )
