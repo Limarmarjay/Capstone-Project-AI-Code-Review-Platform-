@@ -94,3 +94,36 @@ new file mode 100644
     assert review_output["llm_status"] == "success"
 
     assert "demo_secret" not in recorder.user
+
+
+def test_bandit_info_finding_does_not_become_critical_in_upload_review():
+    patch = """\
+diff --git a/example.py b/example.py
+new file mode 100644
+--- /dev/null
++++ b/example.py
+@@ -0,0 +1,3 @@
++import subprocess
++def run(cmd):
++    subprocess.run(cmd, shell=True)
+"""
+
+    review_output, scan_issues = analyze_uploaded_submission(
+        patch,
+        submission_id="sub_severity",
+        submission_type="patch",
+        filename="severity.patch",
+    )
+
+    assert scan_issues == {}
+
+    b404 = next(
+        finding
+        for finding in review_output["findings"]
+        if any(
+            "B404" in static_id
+            for static_id in finding["static_finding_ids"]
+        )
+    )
+
+    assert b404["severity"] != "critical"

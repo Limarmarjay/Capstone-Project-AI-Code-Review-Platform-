@@ -27,6 +27,7 @@ from .types import (
     LLMStatus,
     ReviewFile,
     ReviewOutput,
+    Severity,
     Source,
     StaticFinding,
 )
@@ -145,7 +146,11 @@ def _combine(file: ReviewFile, llm_findings: list[dict]) -> list[Finding]:
             finding_id=_new_id(),
             source=Source.COMBINED if confirmed else Source.LLM,
             category=category,
-            severity=assign_severity(category, confirmed_by_both=confirmed),
+            severity=assign_severity(
+                category,
+                confirmed_by_both=confirmed,
+                base_severity=_static_baseline(matched) if matched else None,
+            ),
             file_path=file.file_path,
             line=line or (matched.line if matched else 0),
             title=str(lf.get("title", "")).strip() or "Issue",
@@ -174,7 +179,10 @@ def _static_to_finding(file: ReviewFile, sf: StaticFinding) -> Finding:
         finding_id=_new_id(),
         source=Source.STATIC,
         category=category,
-        severity=assign_severity(category),
+        severity=assign_severity(
+            category,
+            base_severity=_static_baseline(sf),
+        ),
         file_path=file.file_path,
         line=sf.line,
         title=f"{sf.tool}: {sf.rule_id}".strip(": "),
@@ -198,6 +206,16 @@ def _static_only(inp: AnalysisInput, status: LLMStatus, *, note: str) -> ReviewO
         summary=f"Static-only review ({note}). " + _summarize(findings, status),
         findings=findings,
     )
+
+
+def _static_baseline(sf: StaticFinding) -> Severity | None:
+    if not sf.severity:
+        return None
+
+    try:
+        return Severity(sf.severity)
+    except ValueError:
+        return None
 
 
 def _coerce_category(value) -> Category:

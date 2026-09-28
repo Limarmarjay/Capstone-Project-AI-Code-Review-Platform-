@@ -12,6 +12,14 @@ from repo_diff_pipeline.models import (
     ParsedDiff,
 )
 
+BANDIT_TO_REVIEW_SEVERITY = {
+    "critical": "critical",
+    "high": "high",
+    "medium": "medium",
+    "low": "low",
+    "info": "low",
+}
+
 
 def bandit_finding_to_static_finding(
     finding: dict,
@@ -19,6 +27,11 @@ def bandit_finding_to_static_finding(
 ) -> StaticFinding:
     rule_id = finding.get("rule_id", "")
     line = int(finding["line"])
+
+    normalized_severity = finding.get("normalized_severity")
+    review_severity = BANDIT_TO_REVIEW_SEVERITY.get(
+        normalized_severity
+    )
 
     return StaticFinding(
         finding_id=f"bandit:{rule_id}:{file_path}:{line}",
@@ -28,6 +41,7 @@ def bandit_finding_to_static_finding(
         message=finding.get("message", ""),
         file_path=file_path,
         line=line,
+        severity=review_severity,
     )
 
 

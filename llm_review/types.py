@@ -58,6 +58,7 @@ class StaticFinding:
     message: str
     file_path: str
     line: int
+    severity: str | None = None
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "StaticFinding":
@@ -69,8 +70,8 @@ class StaticFinding:
             message=d.get("message", ""),
             file_path=d["file_path"],
             line=int(d.get("line", 0)),
+            severity=d.get("severity"),
         )
-
 
 @dataclass
 class Hunk:

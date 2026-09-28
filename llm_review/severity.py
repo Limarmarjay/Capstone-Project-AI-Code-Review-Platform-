@@ -20,15 +20,26 @@ _BASE: dict[Category, Severity] = {
 }
 
 
-def assign_severity(category: Category, *, confirmed_by_both: bool = False) -> Severity:
+def assign_severity(
+    category: Category,
+    *,
+    confirmed_by_both: bool = False,
+    base_severity: Severity | None = None,
+) -> Severity:
     """Return a severity for a finding.
 
     confirmed_by_both escalates one level when BOTH static analysis and the
     LLM flagged the same issue — agreement is a stronger signal.
     """
-    base = _BASE.get(category, Severity.LOW)
+    base = (
+        base_severity
+        if base_severity is not None
+        else _BASE.get(category, Severity.LOW)
+    )
+
     if confirmed_by_both:
         return _escalate(base)
+
     return base
 
 

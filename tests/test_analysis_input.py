@@ -43,6 +43,7 @@ def test_bandit_finding_converts_to_static_finding():
     assert result.message == "subprocess call with shell=True"
     assert result.file_path == "src/example.py"
     assert result.line == 10
+    assert result.severity == "high"
 
 
 def test_python_file_scans_redacts_and_converts_findings():
@@ -484,3 +485,17 @@ def test_incomplete_added_file_records_scan_issue_and_keeps_file():
     assert analysis_input["files"][0]["static_findings"] == []
 
 
+def test_bandit_info_severity_maps_to_low():
+    finding = {
+        "rule_id": "B404",
+        "message": "Import of subprocess module.",
+        "line": 1,
+        "normalized_severity": "info",
+    }
+
+    result = bandit_finding_to_static_finding(
+        finding,
+        "src/example.py",
+    )
+
+    assert result.severity == "low"

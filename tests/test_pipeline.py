@@ -12,7 +12,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from llm_review import review
 from llm_review.client import MockLLMClient
 from llm_review.severity import assign_severity, score
-from llm_review.types import Category, Severity
+from llm_review.types import (
+    Category,
+    ReviewFile,
+    Severity,
+    StaticFinding,
+)
+from llm_review.pipeline import _combine, _static_to_finding
 
 
 def _load_input():
@@ -108,3 +114,79 @@ if __name__ == "__main__":
             print(f"FAIL {fn.__name__}: {e}")
     print(f"\n{len(fns) - failed}/{len(fns)} passed")
     sys.exit(1 if failed else 0)
+
+
+def test_low_base_severity_is_respected():
+    assert (
+        assign_severity(
+            Category.SECURITY,
+            base_severity=Severity.LOW,
+        )
+        == Severity.LOW
+    )
+
+
+def test_static_finding_uses_tool_baseline_severity():
+    static_finding = StaticFinding(
+        finding_id="bandit:B602:example.py:3",
+        tool="bandit",
+        rule_id="B602",
+        category="security",
+        message="Subprocess call with shell=True.",
+        file_path="example.py",
+        line=3,
+        severity="high",
+    )
+
+    review_file = ReviewFile(
+        file_path="example.py",
+        language="python",
+        hunks=[],
+        static_findings=[static_finding],
+    )
+
+    finding = _static_to_finding(
+        review_file,
+        static_finding,
+    )
+
+    assert finding.severity == Severity.HIGH
+
+
+def test_confirmed_static_finding_escalates_from_tool_baseline():
+    static_finding = StaticFinding(
+        finding_id="bandit:B602:example.py:3",
+        tool="bandit",
+        rule_id="B602",
+        category="security",
+        message="Subprocess call with shell=True.",
+        file_path="example.py",
+        line=3,
+        severity="high",
+    )
+
+    review_file = ReviewFile(
+        file_path="example.py",
+        language="python",
+        hunks=[],
+        static_findings=[static_finding],
+    )
+
+    llm_findings = [
+        {
+            "category": "security",
+            "line": 3,
+            "title": "Shell command execution",
+            "explanation": "The shell call may allow unsafe command execution.",
+            "suggested_fix": "Avoid shell=True.",
+            "relates_to_static_finding_id": "bandit:B602:example.py:3",
+        }
+    ]
+
+    findings = _combine(
+        review_file,
+        llm_findings,
+    )
+
+    assert len(findings) == 1
+    assert findings[0].severity == Severity.CRITICAL
