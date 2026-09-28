@@ -54,9 +54,12 @@ new file mode 100644
     assert review_output["review_status"] == "completed"
     assert review_output["llm_status"] == "success"
 
-    assert "example.py" in scan_issues
-    assert scan_issues["example.py"] == (
-        "Static analysis not run: full file not available."
+    assert scan_issues == {}
+
+    assert any(
+        "bandit:B105:example.py:1"
+        in finding["static_finding_ids"]
+        for finding in review_output["findings"]
     )
 
     assert len(review_output["findings"]) >= 1

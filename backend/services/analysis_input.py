@@ -1,5 +1,6 @@
 from dataclasses import asdict
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from .bandit_scanner import ScanError, scan_python_file
 from .redactor import redact_findings, redact_text
@@ -88,30 +89,100 @@ def parsed_hunk_to_review_hunk(
     }
 
 
-def build_review_file(
-    file_diff: FileDiff,
-    repo_path: str | None,
-) -> dict:
-    static_findings: list[StaticFinding] = []
-
-    can_scan = (
-        repo_path is not None
+def _is_scannable_python(file_diff: FileDiff) -> bool:
+    return (
+        file_diff.extension == "py"
         and not file_diff.is_binary
-        and file_diff.extension == "py"
         and file_diff.change_type is not ChangeType.DELETED
     )
 
-    if can_scan:
-        repo_root = Path(repo_path).resolve()
-        scan_path = (repo_root / file_diff.path).resolve()
 
-        if not scan_path.is_relative_to(repo_root):
-            raise ScanError("File path is outside the repository.")
+def _reconstruct_added_python_file(file_diff: FileDiff) -> str:
+    numbered_lines: list[tuple[int, str]] = []
 
-        static_findings = scan_python_file_to_static_findings(
-            str(scan_path),
+    for hunk in file_diff.hunks:
+        for line in hunk.lines:
+            if line.line_type != "add" or line.target_line_no is None:
+                raise ScanError(
+                    "Added Python file could not be reconstructed completely."
+                )
+
+            numbered_lines.append(
+                (line.target_line_no, line.content)
+            )
+
+    if not numbered_lines:
+        return ""
+
+    numbered_lines.sort(key=lambda item: item[0])
+
+    actual_lines = [
+        line_number
+        for line_number, _ in numbered_lines
+    ]
+
+    expected_lines = list(
+        range(1, actual_lines[-1] + 1)
+    )
+
+    if actual_lines != expected_lines:
+        raise ScanError(
+            "Added Python file could not be reconstructed completely."
+        )
+
+    return (
+        "\n".join(
+            content
+            for _, content in numbered_lines
+        )
+        + "\n"
+    )
+
+
+def _scan_added_python_file(
+    file_diff: FileDiff,
+) -> list[StaticFinding]:
+    source = _reconstruct_added_python_file(file_diff)
+
+    with TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir) / "submitted.py"
+
+        temp_path.write_text(
+            source,
+            encoding="utf-8",
+        )
+
+        return scan_python_file_to_static_findings(
+            str(temp_path),
             file_diff.path,
         )
+
+
+def build_review_file(
+    file_diff: FileDiff,
+    repo_path: str | None,
+    *,
+    run_static_analysis: bool = True,
+) -> dict:
+    static_findings: list[StaticFinding] = []
+
+    if run_static_analysis and _is_scannable_python(file_diff):
+        if repo_path is not None:
+            repo_root = Path(repo_path).resolve()
+            scan_path = (repo_root / file_diff.path).resolve()
+
+            if not scan_path.is_relative_to(repo_root):
+                raise ScanError("File path is outside the repository.")
+
+            static_findings = scan_python_file_to_static_findings(
+                str(scan_path),
+                file_diff.path,
+            )
+
+        elif file_diff.change_type is ChangeType.ADDED:
+            static_findings = _scan_added_python_file(
+                file_diff
+            )
 
     hunks = [
         parsed_hunk_to_review_hunk(
@@ -144,13 +215,11 @@ def build_analysis_input(
     scan_issues: dict[str, str] = {}
 
     for file_diff in parsed_diff.files:
-        should_scan_python = (
-            file_diff.extension == "py"
-            and not file_diff.is_binary
-            and file_diff.change_type is not ChangeType.DELETED
-        )
-
-        if should_scan_python and repo_path is None:
+        if (
+            _is_scannable_python(file_diff)
+            and repo_path is None
+            and file_diff.change_type is not ChangeType.ADDED
+        ):
             scan_issues[file_diff.path] = (
                 "Static analysis not run: full file not available."
             )
@@ -163,10 +232,10 @@ def build_analysis_input(
         except ScanError as exc:
             scan_issues[file_diff.path] = str(exc)
 
-            # Keep the file and its redacted hunks without retrying Bandit.
             review_file = build_review_file(
                 file_diff,
                 None,
+                run_static_analysis=False,
             )
 
         review_files.append(review_file)

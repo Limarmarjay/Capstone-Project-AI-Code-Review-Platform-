@@ -18,6 +18,7 @@ from repo_diff_pipeline.models import (
     Hunk,
     ParsedDiff,
 )
+from repo_diff_pipeline.diff_parser import parse_diff
 
 from llm_review.types import AnalysisInput
 
@@ -335,3 +336,151 @@ def test_built_analysis_input_matches_llm_contract():
     assert parsed_b602.line == raw_b602["line"]
     assert parsed_b602.file_path == raw_b602["file_path"]
     assert parsed_b602.message == raw_b602["message"]
+
+
+def test_added_python_file_without_repo_is_reconstructed_and_scanned():
+    file_diff = FileDiff(
+        path="src/new_file.py",
+        change_type=ChangeType.ADDED,
+        hunks=[
+            Hunk(
+                source_start=0,
+                source_length=0,
+                target_start=1,
+                target_length=3,
+                lines=[
+                    DiffLine(
+                        line_type="add",
+                        content="import subprocess",
+                        source_line_no=None,
+                        target_line_no=1,
+                    ),
+                    DiffLine(
+                        line_type="add",
+                        content='password = "super_secret_password"',
+                        source_line_no=None,
+                        target_line_no=2,
+                    ),
+                    DiffLine(
+                        line_type="add",
+                        content='subprocess.run("echo hello", shell=True)',
+                        source_line_no=None,
+                        target_line_no=3,
+                    ),
+                ],
+            )
+        ],
+    )
+
+    parsed_diff = ParsedDiff(
+        files=[file_diff]
+    )
+
+    analysis_input, scan_issues = build_analysis_input(
+        parsed_diff,
+        None,
+        submission_id="sub_added",
+        source_type="patch_file",
+        repository="<patch-file>",
+    )
+
+    assert scan_issues == {}
+
+    review_file = analysis_input["files"][0]
+
+    rule_ids = {
+        finding["rule_id"]
+        for finding in review_file["static_findings"]
+    }
+
+    assert "B602" in rule_ids
+
+    b602 = next(
+        finding
+        for finding in review_file["static_findings"]
+        if finding["rule_id"] == "B602"
+    )
+
+    assert b602["line"] == 3
+
+    serialized = json.dumps(review_file)
+
+    assert "super_secret_password" not in serialized
+    assert "<REDACTED_SECRET>" in serialized
+
+
+def test_added_file_is_scanned_without_repo():
+    parsed_diff = parse_diff(
+        "diff --git a/new.py b/new.py\n"
+        "new file mode 100644\n"
+        "--- /dev/null\n"
+        "+++ b/new.py\n"
+        "@@ -0,0 +1,3 @@\n"
+        "+import subprocess\n"
+        "+def run(cmd):\n"
+        "+    subprocess.run(cmd, shell=True)\n"
+    )
+
+    analysis_input, scan_issues = build_analysis_input(
+        parsed_diff,
+        None,
+        submission_id="s",
+        source_type="patch_file",
+        repository="r",
+    )
+
+    findings = analysis_input["files"][0]["static_findings"]
+
+    b602 = next(
+        finding
+        for finding in findings
+        if finding["rule_id"] == "B602"
+    )
+
+    assert b602["line"] == 3
+    assert scan_issues == {}
+
+
+def test_incomplete_added_file_records_scan_issue_and_keeps_file():
+    parsed_diff = ParsedDiff(
+        files=[
+            FileDiff(
+                path="src/incomplete.py",
+                change_type=ChangeType.ADDED,
+                hunks=[
+                    Hunk(
+                        source_start=0,
+                        source_length=0,
+                        target_start=2,
+                        target_length=1,
+                        lines=[
+                            DiffLine(
+                                line_type="add",
+                                content='print("hello")',
+                                source_line_no=None,
+                                target_line_no=2,
+                            )
+                        ],
+                    )
+                ],
+            )
+        ]
+    )
+
+    analysis_input, scan_issues = build_analysis_input(
+        parsed_diff,
+        None,
+        submission_id="sub_incomplete",
+        source_type="patch_file",
+        repository="<patch-file>",
+    )
+
+    assert scan_issues["src/incomplete.py"] == (
+        "Added Python file could not be reconstructed completely."
+    )
+
+    assert len(analysis_input["files"]) == 1
+    assert analysis_input["files"][0]["file_path"] == "src/incomplete.py"
+    assert analysis_input["files"][0]["static_findings"] == []
+
+
