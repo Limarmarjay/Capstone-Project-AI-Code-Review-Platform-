@@ -136,7 +136,10 @@ def _combine(file: ReviewFile, llm_findings: list[dict]) -> list[Finding]:
                 (sf for sf in file.static_findings if sf.finding_id == related_id), None
             )
         if matched is None and line in static_by_line:
-            matched = static_by_line[line]
+            candidate = static_by_line[line]
+
+            if _coerce_category(candidate.category) == category:
+                matched = candidate
 
         confirmed = matched is not None
         if matched:

@@ -43,6 +43,52 @@ def test_combine_links_static_and_llm():
     assert any("sf_002" in f["static_finding_ids"] for f in combined)
 
 
+def test_different_categories_on_same_line_do_not_combine():
+    static_finding = StaticFinding(
+        finding_id="bandit:B404:example.py:1",
+        tool="bandit",
+        rule_id="B404",
+        category="security",
+        message="Import of subprocess module.",
+        file_path="example.py",
+        line=1,
+        severity="low",
+    )
+
+    review_file = ReviewFile(
+        file_path="example.py",
+        language="python",
+        hunks=[],
+        static_findings=[static_finding],
+    )
+
+    llm_findings = [
+        {
+            "category": "missing_docs",
+            "line": 1,
+            "title": "Add a docstring to the changed function",
+            "explanation": "The changed function has no docstring.",
+            "suggested_fix": "Add a short docstring.",
+            "relates_to_static_finding_id": None,
+        }
+    ]
+
+    findings = _combine(
+        review_file,
+        llm_findings,
+    )
+
+    assert len(findings) == 2
+
+    static_result = next(
+        finding
+        for finding in findings
+        if static_finding.finding_id in finding.static_finding_ids
+    )
+
+    assert static_result.severity == Severity.LOW
+
+
 def test_no_static_finding_is_dropped():
     out = review(_load_input(), client=MockLLMClient())
     referenced = {sid for f in out["findings"] for sid in f["static_finding_ids"]}
