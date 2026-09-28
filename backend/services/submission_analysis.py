@@ -4,8 +4,8 @@ from repo_diff_pipeline import validation
 from repo_diff_pipeline.diff_parser import DiffParseError, parse_diff
 from repo_diff_pipeline.models import InputType
 
-from backend.services.analysis_input import build_analysis_input
-from backend.services.redactor import redact_text
+from .analysis_input import build_analysis_input
+from .redactor import redact_text
 
 
 MAX_CHANGED_LINES = 5_000

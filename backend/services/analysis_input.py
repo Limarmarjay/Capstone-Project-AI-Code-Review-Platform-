@@ -1,8 +1,8 @@
 from dataclasses import asdict
 from pathlib import Path
 
-from backend.services.bandit_scanner import ScanError, scan_python_file
-from backend.services.redactor import redact_findings, redact_text
+from .bandit_scanner import ScanError, scan_python_file
+from .redactor import redact_findings, redact_text
 from llm_review.types import StaticFinding
 from repo_diff_pipeline.models import (
     ChangeType,
