@@ -61,7 +61,8 @@ def analyze():
             filename=filename,
         )
     except SubmissionAnalysisError as exc:
-        return jsonify({"error": str(exc)}), 400
+        current_app.logger.info("Submission analysis rejected: %s", exc)
+        return jsonify({"error": "Submission analysis failed."}), 400
     except Exception:
         current_app.logger.exception("Unexpected submission analysis failure")
         return jsonify({"error": "Analysis failed unexpectedly."}), 500
