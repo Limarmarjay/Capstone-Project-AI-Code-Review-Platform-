@@ -69,6 +69,14 @@ def _run_from_ingested(ingested: ingestion.IngestionResult, run_ai_review: bool,
             ingested.repo_ref, ingested.base_ref, ingested.head_ref, str(e), input_type=ingested.input_type,
         )
 
+    # --- Python-only scope check ---
+    non_python_reason = validation.validate_python_only(parsed_diff.files)
+    if non_python_reason:
+        return _blocked_report(
+            ingested.repo_ref, ingested.base_ref, ingested.head_ref,
+            f'Invalid input: {non_python_reason}', diff=parsed_diff, input_type=ingested.input_type,
+        )
+
     total_changed = parsed_diff.total_additions + parsed_diff.total_deletions
     if total_changed > MAX_REASONABLE_CHANGED_LINES:
         return _blocked_report(

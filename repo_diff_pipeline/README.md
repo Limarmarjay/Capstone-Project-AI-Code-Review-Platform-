@@ -9,6 +9,7 @@ Implements the "AI Automated Code Review Workflow" flowchart end to end.
 | Diff/Patch/PR Ingestion (Pull Request? / Patch file? / GitHub Connected?) | `ingestion.py`, `github_client.py` | Branches on `pr_url` / `patch_text` / `repo_url`+`repo_path`. GitHub branch checks token validity ("GitHub Connected?") before fetching the PR diff. |
 | Input Validation | `validation.py` | Size, emptiness, binary, and "looks like a diff" checks before the expensive steps run. |
 | Diff Parsing | `diff_parser.py` | Unified diff → structured `FileDiff`/`Hunk` objects, with size caps. |
+| Python-only scope check | `validation.py: validate_python_only` | This platform only reviews Python. Run right after diff parsing (needs the parsed file paths); if the diff touches **any** non-`.py` file, the whole submission is blocked — mixed-language diffs are rejected, not partially reviewed. |
 | Secrets Found? / Redact Secrets | `secrets_scanner.py` | Pattern-based scan of added lines; redacts in the parsed diff **and** rewrites the on-disk checkout so static tools never see the raw secret either. |
 | Static Analysis & Security Checks (Run Static Checks / Apply Security Rules) | `checks.py` | `ruff`+`bandit` (file-based, skipped gracefully if no checkout) plus diff-only regex security rules that always run. |
 | Run LLM Review / Valid LLM Response? | `ai_reviewer.py` | `review_diff_with_retry` retries up to 3x on malformed model output before giving up. |
