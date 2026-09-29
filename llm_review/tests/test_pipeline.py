@@ -151,6 +151,22 @@ def _capture_logs(logger_name="llm_review.pipeline"):
         logger.setLevel(prev_level)
 
 
+@contextlib.contextmanager
+def _blocked_import(module_name):
+    """Force `import module_name` (or `from module_name import ...`) to
+    raise ImportError for the duration of the block, restoring whatever
+    was in sys.modules afterward."""
+    prev = sys.modules.get(module_name)
+    sys.modules[module_name] = None
+    try:
+        yield
+    finally:
+        if prev is not None:
+            sys.modules[module_name] = prev
+        else:
+            sys.modules.pop(module_name, None)
+
+
 def _load_input():
     path = os.path.join(os.path.dirname(__file__), "fixtures", "mock_analysis_input.json")
     with open(path) as f:
@@ -628,6 +644,90 @@ def test_unparseable_static_severity_logs_warning_and_falls_back():
     assert any("not-a-real-severity" in r.getMessage() for r in records), (
         "expected a warning naming the unparseable severity value"
     )
+
+
+# ---- Redaction gate: static finding messages + diff text before the LLM --
+
+class _PromptCapturingClient:
+    """Records every prompt it's asked to complete, and answers with an
+    empty findings list so the pipeline treats the call as a success."""
+
+    def __init__(self):
+        self.prompts = []
+
+    def complete(self, system, user):
+        self.prompts.append(user)
+        return json.dumps({"findings": []})
+
+
+def test_bandit_style_static_finding_message_is_redacted_in_llm_prompt():
+    data = {
+        "submission_id": "sub_redact_message",
+        "source_type": "pull_request",
+        "repository": "org/repo",
+        "redaction_applied": True,
+        "files": [{
+            "file_path": "app.py",
+            "language": "python",
+            "hunks": [],
+            "static_findings": [{
+                "finding_id": "sf_secret",
+                "tool": "bandit",
+                "rule_id": "B105",
+                "category": "security",
+                "message": "Possible hardcoded password: 'hunter2_fake_password'",
+                "file_path": "app.py",
+                "line": 3,
+            }],
+        }],
+    }
+    client = _PromptCapturingClient()
+    out = review(data, client=client)
+
+    assert out["llm_status"] == "success"
+    assert len(client.prompts) == 1
+    assert "hunter2_fake_password" not in client.prompts[0]
+    assert "<REDACTED_SECRET>" in client.prompts[0]
+
+
+def test_assignment_style_secret_in_diff_is_redacted_in_llm_prompt():
+    data = {
+        "submission_id": "sub_redact_diff",
+        "source_type": "pull_request",
+        "repository": "org/repo",
+        "redaction_applied": True,
+        "files": [{
+            "file_path": "app.py",
+            "language": "python",
+            "hunks": [{
+                "hunk_id": "h1",
+                "start_line": 1,
+                "end_line": 1,
+                "diff": '@@ -1,0 +1,1 @@\n+api_key = "sk-fake-1234567890abcdef"\n',
+                "added_lines": [1],
+                "removed_lines": [],
+                "context_lines": [],
+            }],
+            "static_findings": [],
+        }],
+    }
+    client = _PromptCapturingClient()
+    out = review(data, client=client)
+
+    assert out["llm_status"] == "success"
+    assert len(client.prompts) == 1
+    assert "sk-fake-1234567890abcdef" not in client.prompts[0]
+    assert "<REDACTED_SECRET>" in client.prompts[0]
+
+
+def test_review_falls_back_to_skipped_when_redactor_import_fails():
+    with _blocked_import("Static_checks_and_sec_rules.services.redactor"):
+        out = review(_load_input(), client=MockLLMClient())
+
+    assert out["llm_status"] == "skipped"
+    assert out["review_status"] == "completed"
+    assert all(f["source"] == "static" for f in out["findings"])
+    assert any("sf_002" in f["static_finding_ids"] for f in out["findings"])
 
 
 if __name__ == "__main__":

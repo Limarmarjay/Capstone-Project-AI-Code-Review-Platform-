@@ -13,6 +13,7 @@ from static results alone.
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import re
@@ -51,11 +52,27 @@ def review(data: dict, *, client: LLMClient | None = None) -> dict:
         return _static_only(inp, LLMStatus.SKIPPED,
                             note="redaction not confirmed; LLM skipped").to_dict()
 
+    # #2's redaction covers the diff/patch text itself, but static tools
+    # (e.g. bandit) can still echo a raw secret value into their own
+    # finding message. Redact that -- and the hunk diff text again, as a
+    # second layer -- right before it goes into the LLM prompt.
+    try:
+        from Static_checks_and_sec_rules.services.redactor import redact_text
+    except ImportError:
+        log.error(
+            "Could not import redact_text from "
+            "Static_checks_and_sec_rules.services.redactor; refusing to "
+            "send static finding messages or diff text to the LLM "
+            "unredacted. Falling back to static-only."
+        )
+        return _static_only(inp, LLMStatus.SKIPPED,
+                            note="redaction module unavailable; LLM skipped").to_dict()
+
     all_findings: list[Finding] = []
     llm_status = LLMStatus.SUCCESS
 
     for file in inp.files:
-        llm_raw, status = _run_llm(file, client)
+        llm_raw, status = _run_llm(_redacted_copy(file, redact_text), client)
         if status is not LLMStatus.SUCCESS:
             # First failure downgrades the whole run's status; later
             # failures on other files don't overwrite it, so the reported
@@ -79,6 +96,22 @@ def review(data: dict, *, client: LLMClient | None = None) -> dict:
 
 
 # ---- LLM step -----------------------------------------------------------
+
+def _redacted_copy(file: ReviewFile, redact) -> ReviewFile:
+    """Return a copy of `file` with static-finding messages and hunk diff
+    text passed through `redact`, so the LLM prompt never sees a raw
+    secret value a static tool happened to quote. The original `file` is
+    left untouched -- it's still used for combining/output afterward."""
+    redacted_findings = [
+        dataclasses.replace(sf, message=redact(sf.message))
+        for sf in file.static_findings
+    ]
+    redacted_hunks = [
+        dataclasses.replace(h, diff=redact(h.diff))
+        for h in file.hunks
+    ]
+    return dataclasses.replace(file, hunks=redacted_hunks, static_findings=redacted_findings)
+
 
 def _run_llm(
     file: ReviewFile, client: LLMClient, *, max_attempts: int = MAX_LLM_ATTEMPTS
