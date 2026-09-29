@@ -21,7 +21,14 @@ class LLMError(Exception):
 
 
 class LLMTimeout(LLMError):
-    """Raised specifically on timeout, so the pipeline can distinguish it."""
+    """Transient failure worth retrying: timeout, rate limit, connection
+    error, or a 5xx from the API."""
+
+
+class LLMPermanentError(LLMError):
+    """Non-retryable failure: bad credentials, permission, a malformed
+    request, a missing API key, or the SDK not being installed. Retrying
+    these wastes latency without any chance of succeeding."""
 
 
 class LLMClient(Protocol):
@@ -37,16 +44,33 @@ class MockLLMClient:
     so the pipeline produces real-looking output without a network call.
     """
 
-    def __init__(self, *, fail: bool = False, garbage: bool = False) -> None:
-        # fail/garbage let you exercise the fallback path in tests.
+    def __init__(
+        self,
+        *,
+        fail: bool = False,
+        garbage: bool = False,
+        permanent_fail: bool = False,
+        bad_shape: bool = False,
+    ) -> None:
+        # fail/garbage/permanent_fail/bad_shape let you exercise the
+        # fallback and retry paths in tests.
         self.fail = fail
         self.garbage = garbage
+        self.permanent_fail = permanent_fail
+        self.bad_shape = bad_shape
+        self.call_count = 0  # lets retry tests assert how many attempts ran
 
     def complete(self, system: str, user: str) -> str:
+        self.call_count += 1
+        if self.permanent_fail:
+            raise LLMPermanentError("mock: simulated permanent failure (e.g. bad API key)")
         if self.fail:
             raise LLMTimeout("mock: simulated timeout")
         if self.garbage:
             return "Sure! Here is your review: (not json at all)"
+        if self.bad_shape:
+            # Valid JSON, wrong shape: "findings" isn't a list of dicts.
+            return json.dumps({"findings": None})
 
         findings = []
         # Cheap heuristics so the mock reacts to the prompt content.
@@ -101,26 +125,47 @@ class AnthropicLLMClient:
         try:
             import anthropic  # lazy
         except ImportError as e:  # pragma: no cover
-            raise LLMError("anthropic SDK not installed") from e
+            raise LLMPermanentError("anthropic SDK not installed") from e
 
         api_key = os.environ.get("ANTHROPIC_API_KEY")
         if not api_key:
-            raise LLMError("ANTHROPIC_API_KEY not set")
+            raise LLMPermanentError("ANTHROPIC_API_KEY not set")
 
-        client = anthropic.Anthropic(api_key=api_key, timeout=self.timeout)
         try:
+            client = anthropic.Anthropic(api_key=api_key, timeout=self.timeout)
             resp = client.messages.create(
                 model=self.model,
                 max_tokens=1500,
                 system=system,
                 messages=[{"role": "user", "content": user}],
             )
-        except Exception as e:  # network, timeout, rate limit, etc.
-            # Normalize everything into our own error types.
-            name = type(e).__name__.lower()
-            if "timeout" in name:
+        except anthropic.APITimeoutError as e:
+            raise LLMTimeout(str(e)) from e
+        except anthropic.RateLimitError as e:
+            raise LLMTimeout(str(e)) from e
+        except anthropic.APIConnectionError as e:
+            # Broader network failures; APITimeoutError (a subclass) is
+            # caught above so it isn't swallowed here.
+            raise LLMTimeout(str(e)) from e
+        except anthropic.AuthenticationError as e:
+            raise LLMPermanentError(str(e)) from e
+        except anthropic.PermissionDeniedError as e:
+            raise LLMPermanentError(str(e)) from e
+        except anthropic.NotFoundError as e:
+            raise LLMPermanentError(str(e)) from e
+        except anthropic.BadRequestError as e:
+            raise LLMPermanentError(str(e)) from e
+        except anthropic.APIStatusError as e:
+            # Any other HTTP-status error (e.g. a 5xx not covered above):
+            # treat server errors as transient, other status codes as
+            # permanent, since retrying a non-5xx status is unlikely to help.
+            if e.status_code >= 500:
                 raise LLMTimeout(str(e)) from e
-            raise LLMError(str(e)) from e
+            raise LLMPermanentError(str(e)) from e
+        except Exception as e:
+            # Constructor failures and anything else unclassified: fail
+            # fast rather than assume it's safe to retry.
+            raise LLMPermanentError(str(e)) from e
 
         # Concatenate text blocks.
         text = "".join(

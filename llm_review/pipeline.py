@@ -14,10 +14,11 @@ from static results alone.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import uuid
 
-from .client import LLMClient, LLMError, LLMTimeout, MockLLMClient
+from .client import LLMClient, LLMError, LLMPermanentError, MockLLMClient
 from .prompt import SYSTEM_PROMPT, build_user_prompt
 from .severity import assign_severity, score
 from .types import (
@@ -31,6 +32,10 @@ from .types import (
     Source,
     StaticFinding,
 )
+
+log = logging.getLogger(__name__)
+
+MAX_LLM_ATTEMPTS = 2  # retries a transient failure once before falling back
 
 
 def review(data: dict, *, client: LLMClient | None = None) -> dict:
@@ -52,9 +57,12 @@ def review(data: dict, *, client: LLMClient | None = None) -> dict:
     for file in inp.files:
         llm_raw, status = _run_llm(file, client)
         if status is not LLMStatus.SUCCESS:
-            # First failure downgrades the whole run's status but we keep
-            # going per-file using static results.
-            llm_status = status
+            # First failure downgrades the whole run's status; later
+            # failures on other files don't overwrite it, so the reported
+            # status reflects what went wrong first, not what went wrong
+            # last.
+            if llm_status is LLMStatus.SUCCESS:
+                llm_status = status
             all_findings.extend(_static_findings_only(file))
             continue
         all_findings.extend(_combine(file, llm_raw))
@@ -72,20 +80,36 @@ def review(data: dict, *, client: LLMClient | None = None) -> dict:
 
 # ---- LLM step -----------------------------------------------------------
 
-def _run_llm(file: ReviewFile, client: LLMClient) -> tuple[list[dict], LLMStatus]:
-    """Call the LLM and parse its JSON. Returns (parsed_findings, status)."""
-    user = build_user_prompt(file)
-    try:
-        raw = client.complete(SYSTEM_PROMPT, user)
-    except LLMTimeout:
-        return [], LLMStatus.TIMEOUT
-    except LLMError:
-        return [], LLMStatus.TIMEOUT  # treat generic failure like a retryable miss
+def _run_llm(
+    file: ReviewFile, client: LLMClient, *, max_attempts: int = MAX_LLM_ATTEMPTS
+) -> tuple[list[dict], LLMStatus]:
+    """Call the LLM and parse its JSON. Returns (parsed_findings, status).
 
-    parsed = _parse_json(raw)
-    if parsed is None:
-        return [], LLMStatus.INVALID_RESPONSE
-    return parsed.get("findings", []), LLMStatus.SUCCESS
+    Retries up to max_attempts on a transient failure (LLMTimeout, or any
+    other non-permanent LLMError, or a response that fails JSON parsing) --
+    any of those can be a one-off fluke. Never retries LLMPermanentError:
+    a bad API key or an unsupported request won't succeed on a second try,
+    so retrying it would only waste latency.
+    """
+    user = build_user_prompt(file)
+    status = LLMStatus.TIMEOUT
+    for _attempt in range(max_attempts):
+        try:
+            raw = client.complete(SYSTEM_PROMPT, user)
+        except LLMPermanentError:
+            return [], LLMStatus.INVALID_RESPONSE
+        except LLMError:
+            status = LLMStatus.TIMEOUT
+            continue
+
+        parsed = _parse_json(raw)
+        if parsed is None:
+            status = LLMStatus.INVALID_RESPONSE
+            continue
+
+        return parsed.get("findings", []), LLMStatus.SUCCESS
+
+    return [], status
 
 
 def _parse_json(raw: str) -> dict | None:
@@ -106,6 +130,9 @@ def _parse_json(raw: str) -> dict | None:
         except (json.JSONDecodeError, ValueError):
             return None
     if not isinstance(obj, dict) or "findings" not in obj:
+        return None
+    findings = obj.get("findings")
+    if not isinstance(findings, list) or not all(isinstance(f, dict) for f in findings):
         return None
     return obj
 
@@ -211,14 +238,31 @@ def _static_only(inp: AnalysisInput, status: LLMStatus, *, note: str) -> ReviewO
     )
 
 
+_STATIC_SEVERITY_ALIASES: dict[str, Severity] = {
+    "critical": Severity.CRITICAL,
+    "high": Severity.HIGH,
+    "medium": Severity.MEDIUM,
+    "low": Severity.LOW,
+    # repo_diff_pipeline's info/warning/error/critical scale
+    "error": Severity.HIGH,
+    "warning": Severity.MEDIUM,
+    "info": Severity.LOW,
+}
+
+
 def _static_baseline(sf: StaticFinding) -> Severity | None:
     if not sf.severity:
         return None
 
-    try:
-        return Severity(sf.severity)
-    except ValueError:
+    mapped = _STATIC_SEVERITY_ALIASES.get(sf.severity.strip().lower())
+    if mapped is None:
+        log.warning(
+            "Unrecognized static finding severity %r for finding_id=%s; "
+            "falling back to the category default.",
+            sf.severity, sf.finding_id,
+        )
         return None
+    return mapped
 
 
 def _coerce_category(value) -> Category:
