@@ -55,7 +55,9 @@ def review(data: dict, *, client: LLMClient | None = None) -> dict:
     # #2's redaction covers the diff/patch text itself, but static tools
     # (e.g. bandit) can still echo a raw secret value into their own
     # finding message. Redact that -- and the hunk diff text again, as a
-    # second layer -- right before it goes into the LLM prompt.
+    # second layer -- once per file, and use that same redacted copy for
+    # everything downstream (the LLM prompt AND the findings that end up
+    # in review_output), so no unredacted static message can reach either.
     try:
         from Static_checks_and_sec_rules.services.redactor import redact_text
     except ImportError:
@@ -65,14 +67,18 @@ def review(data: dict, *, client: LLMClient | None = None) -> dict:
             "send static finding messages or diff text to the LLM "
             "unredacted. Falling back to static-only."
         )
-        return _static_only(inp, LLMStatus.SKIPPED,
-                            note="redaction module unavailable; LLM skipped").to_dict()
+        return _static_only(
+            inp, LLMStatus.SKIPPED,
+            note="redaction module unavailable; static finding messages "
+                 "could not be redacted; LLM skipped",
+        ).to_dict()
 
     all_findings: list[Finding] = []
     llm_status = LLMStatus.SUCCESS
 
     for file in inp.files:
-        llm_raw, status = _run_llm(_redacted_copy(file, redact_text), client)
+        redacted_file = _redacted_copy(file, redact_text)
+        llm_raw, status = _run_llm(redacted_file, client)
         if status is not LLMStatus.SUCCESS:
             # First failure downgrades the whole run's status; later
             # failures on other files don't overwrite it, so the reported
@@ -80,9 +86,9 @@ def review(data: dict, *, client: LLMClient | None = None) -> dict:
             # last.
             if llm_status is LLMStatus.SUCCESS:
                 llm_status = status
-            all_findings.extend(_static_findings_only(file))
+            all_findings.extend(_static_findings_only(redacted_file))
             continue
-        all_findings.extend(_combine(file, llm_raw))
+        all_findings.extend(_combine(redacted_file, llm_raw))
 
     output = ReviewOutput(
         submission_id=inp.submission_id,

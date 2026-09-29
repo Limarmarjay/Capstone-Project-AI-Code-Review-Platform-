@@ -730,6 +730,76 @@ def test_review_falls_back_to_skipped_when_redactor_import_fails():
     assert any("sf_002" in f["static_finding_ids"] for f in out["findings"])
 
 
+def test_summary_notes_redaction_unavailable_when_redactor_import_fails():
+    with _blocked_import("Static_checks_and_sec_rules.services.redactor"):
+        out = review(_load_input(), client=MockLLMClient())
+
+    assert out["llm_status"] == "skipped"
+    assert "could not be redacted" in out["summary"]
+
+
+def test_bandit_style_secret_is_redacted_in_review_output_on_success():
+    data = {
+        "submission_id": "sub_redact_output_success",
+        "source_type": "pull_request",
+        "repository": "org/repo",
+        "redaction_applied": True,
+        "files": [{
+            "file_path": "app.py",
+            "language": "python",
+            "hunks": [],
+            "static_findings": [{
+                "finding_id": "sf_secret",
+                "tool": "bandit",
+                "rule_id": "B105",
+                "category": "security",
+                "message": "Possible hardcoded password: 'hunter2_fake_password'",
+                "file_path": "app.py",
+                "line": 3,
+            }],
+        }],
+    }
+    out = review(data, client=MockLLMClient())
+
+    assert out["llm_status"] == "success"
+    assert len(out["findings"]) >= 1
+    assert all("hunter2_fake_password" not in f["explanation"] for f in out["findings"])
+    assert any("<REDACTED_SECRET>" in f["explanation"] for f in out["findings"])
+
+
+def test_bandit_style_secret_is_redacted_in_review_output_on_llm_failure():
+    data = {
+        "submission_id": "sub_redact_output_failure",
+        "source_type": "pull_request",
+        "repository": "org/repo",
+        "redaction_applied": True,
+        "files": [{
+            "file_path": "app.py",
+            "language": "python",
+            "hunks": [],
+            "static_findings": [{
+                "finding_id": "sf_secret",
+                "tool": "bandit",
+                "rule_id": "B105",
+                "category": "security",
+                "message": "Possible hardcoded password: 'hunter2_fake_password'",
+                "file_path": "app.py",
+                "line": 3,
+            }],
+        }],
+    }
+    # MockLLMClient(fail=True) always raises LLMTimeout, so _run_llm
+    # exhausts its retries and this file falls back to the per-file
+    # static-only path -- exactly the path this change also redacts.
+    out = review(data, client=MockLLMClient(fail=True))
+
+    assert out["llm_status"] == "timeout"
+    assert all(f["source"] == "static" for f in out["findings"])
+    assert len(out["findings"]) >= 1
+    assert all("hunter2_fake_password" not in f["explanation"] for f in out["findings"])
+    assert any("<REDACTED_SECRET>" in f["explanation"] for f in out["findings"])
+
+
 if __name__ == "__main__":
     # Minimal stdlib runner so it works without pytest installed.
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
