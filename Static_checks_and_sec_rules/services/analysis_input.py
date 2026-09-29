@@ -28,7 +28,7 @@ def bandit_finding_to_static_finding(
     rule_id = finding.get("rule_id", "")
     line = int(finding["line"])
 
-    normalized_severity = finding.get("normalized_severity")
+    normalized_severity = finding.get("normalized_severity", "info")
     review_severity = BANDIT_TO_REVIEW_SEVERITY.get(
         normalized_severity
     )

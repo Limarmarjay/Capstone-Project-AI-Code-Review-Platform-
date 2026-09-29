@@ -22,7 +22,7 @@ Vibe-Coders, Programmers, Software Developers, Code Authors, Code Reviewers, Jun
 
 ## Functional Requirements
 1. The system shall accept a `.diff`/`.patch` file upload and parse it into a list of changed files with line-level detail.
-2. The system shall accept a public Git repository URL and a branch or commit hash, and successfully clone it locally.
+2. The system shall connect to a GitHub repository, select a Pull Request, and retrieve exclusively .py files containing code changes.
 3. The system shall reject any submission exceeding a defined size limit (e.g., 10 MB) and return a clear error message.
 4. The system shall detect and reject malformed or non-diff-format input, returning a descriptive validation error.
 5. The system shall output parsed diff data as structured JSON containing file paths, hunks, and line numbers, ready for hand-off to the static analysis and LLM modules.

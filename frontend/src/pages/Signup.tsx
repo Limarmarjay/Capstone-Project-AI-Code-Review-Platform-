@@ -3,6 +3,7 @@ import type { SubmitEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { signup } from '../api'
 import { useAuth } from '../AuthContext'
+import '../App.css'
 
 function Signup() {
   const [username, setUsername] = useState('')

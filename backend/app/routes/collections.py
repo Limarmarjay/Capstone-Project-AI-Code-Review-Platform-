@@ -7,7 +7,7 @@ from flask import Blueprint, g, jsonify, request
 from app.db import db
 from app.tokens import require_auth
 
-COLLECTION_NAMES = ['github_connection', 'submission', 'review', 'findings']
+COLLECTION_NAMES = ['submission', 'review', 'findings']
 
 
 def _serialize(document):
