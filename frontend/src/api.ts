@@ -6,10 +6,30 @@ interface AuthResponse {
 }
 
 async function parseResponse<T>(response: Response): Promise<T> {
-  const data = await response.json()
-  if (!response.ok) {
-    throw new Error(data.error ?? 'Request failed.')
+  let data: unknown
+
+  try {
+    data = await response.json()
+  } catch {
+    if (!response.ok) {
+      throw new Error(`Request failed (${response.status}).`)
+    }
+
+    throw new Error('Server returned an invalid response.')
   }
+
+  if (!response.ok) {
+    const message =
+      typeof data === 'object' &&
+      data !== null &&
+      'error' in data &&
+      typeof (data as { error?: unknown }).error === 'string'
+        ? (data as { error: string }).error
+        : `Request failed (${response.status}).`
+
+    throw new Error(message)
+  }
+
   return data as T
 }
 
@@ -36,6 +56,33 @@ interface Submission {
   content: string
 }
 
+export interface ReviewFinding {
+  finding_id: string
+  source: string
+  category: string
+  severity: string
+  file_path: string
+  line: number
+  title: string
+  explanation: string
+  suggested_fix: string
+  static_finding_ids: string[]
+}
+
+export interface ReviewOutput {
+  submission_id: string
+  review_status: string
+  llm_status: string
+  overall_score: number
+  summary: string
+  findings: ReviewFinding[]
+}
+
+export interface AnalysisResponse {
+  review: ReviewOutput
+  scan_issues: Record<string, string>
+}
+
 export async function createSubmission(
   submissionType: 'patch' | 'diff',
   file: File,
@@ -56,6 +103,24 @@ export async function createSubmission(
     }),
   })
   return parseResponse<Submission>(response)
+}
+
+export async function analyzeSubmission(
+  submissionId: string,
+  token: string,
+): Promise<AnalysisResponse> {
+  const response = await fetch(`${API_BASE_URL}/analyze`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      submission_id: submissionId,
+    }),
+  })
+
+  return parseResponse<AnalysisResponse>(response)
 }
 
 export function getGithubConnectUrl(token: string): string {

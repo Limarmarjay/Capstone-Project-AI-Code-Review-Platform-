@@ -1,0 +1,14 @@
+diff --git a/demo.py b/demo.py
+new file mode 100644
+--- /dev/null
++++ b/demo.py
+@@ -0,0 +1,9 @@
++import subprocess
++
++password = "DEMO_SUPER_SECRET_927"
++
++def run_command(user_input):
++    subprocess.run(user_input, shell=True)
++
++def evaluate(user_input):
++    return eval(user_input)

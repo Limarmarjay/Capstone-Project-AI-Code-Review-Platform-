@@ -1,6 +1,7 @@
 from flask import Flask
 from flask_cors import CORS
 
+from app.routes.analysis import analysis_bp
 from app.routes.auth import auth_bp
 from app.routes.collections import COLLECTION_NAMES, make_collection_blueprint
 from app.routes.github import github_bp
@@ -18,6 +19,7 @@ def create_app() -> Flask:
 
     app.register_blueprint(health_bp)
     app.register_blueprint(auth_bp)
+    app.register_blueprint(analysis_bp)
     app.register_blueprint(github_bp)
     app.register_blueprint(submission_bp)
     for name in GENERIC_COLLECTION_NAMES:

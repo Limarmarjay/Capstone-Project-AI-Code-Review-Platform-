@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import {
+  analyzeSubmission,
   createSubmission,
   getGithubConnectUrl,
   getGithubStatus,
@@ -8,11 +9,18 @@ import {
   listGithubRepos,
   submitPullRequest,
 } from '../api'
-import type { GithubPullRequest, GithubRepo } from '../api'
+import type { AnalysisResponse, GithubPullRequest, GithubRepo } from '../api'
 import { useAuth } from '../AuthContext'
 import '../App.css'
 
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024 // 10 MB, per REQUIREMENTS.md functional requirement #3
+
+const SEVERITY_ORDER: Record<string, number> = {
+  critical: 0,
+  high: 1,
+  medium: 2,
+  low: 3,
+}
 
 interface FileUploadFieldProps {
   label: string
@@ -24,7 +32,8 @@ interface FileUploadFieldProps {
 function FileUploadField({ label, accept, submissionType, token }: FileUploadFieldProps) {
   const [fileName, setFileName] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [uploading, setUploading] = useState(false)
+  const [phase, setPhase] = useState<'idle' | 'uploading' | 'analyzing'>('idle')
+  const [analysis, setAnalysis] = useState<AnalysisResponse | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const handleChange = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -36,21 +45,50 @@ function FileUploadField({ label, accept, submissionType, token }: FileUploadFie
         `"${file.name}" exceeds the 10 MB size limit and was not uploaded.`,
       )
       setFileName(null)
+      setAnalysis(null)
       event.target.value = ''
       return
     }
 
     setError(null)
-    setUploading(true)
+    setFileName(null)
+    setAnalysis(null)
+    setPhase('uploading')
+
+    let uploaded = false
+
     try {
-      await createSubmission(submissionType, file, token)
+      const submission = await createSubmission(
+        submissionType,
+        file,
+        token,
+      )
+
+      uploaded = true
       setFileName(file.name)
+      setPhase('analyzing')
+
+      const result = await analyzeSubmission(
+        submission._id,
+        token,
+      )
+
+      setAnalysis(result)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Upload failed.')
+      const message =
+        err instanceof Error ? err.message : 'Request failed.'
+
+      setError(
+        uploaded
+          ? `Uploaded, but analysis failed: ${message}`
+          : `Upload failed: ${message}`,
+      )
     } finally {
-      setUploading(false)
+      setPhase('idle')
+      event.target.value = ''
     }
-  }
+}
+
 
   return (
     <div className="upload-field">
@@ -58,9 +96,13 @@ function FileUploadField({ label, accept, submissionType, token }: FileUploadFie
         type="button"
         className="upload-button"
         onClick={() => inputRef.current?.click()}
-        disabled={uploading}
+        disabled={phase !== 'idle'}
       >
-        {uploading ? 'Uploading…' : label}
+        {phase === 'uploading'
+          ? 'Uploading...'
+          : phase === 'analyzing'
+            ? 'Analyzing...'
+            : label}
       </button>
       <input
         ref={inputRef}
@@ -71,6 +113,50 @@ function FileUploadField({ label, accept, submissionType, token }: FileUploadFie
       />
       {fileName && <p className="upload-filename">{fileName}</p>}
       {error && <p className="upload-error">{error}</p>}
+      {analysis && (
+        <div className="analysis-results">
+          <h3>Review Results</h3>
+          <p>Score: {analysis.review.overall_score}/100</p>
+          <p>{analysis.review.summary}</p>
+
+          {Object.entries(analysis.scan_issues).map(([path, issue]) => (
+            <p key={path}>
+              Static analysis issue for {path}: {issue}
+            </p>
+          ))}
+
+          {[...analysis.review.findings]
+            .sort(
+              (a, b) =>
+                (SEVERITY_ORDER[a.severity] ?? 9) -
+                (SEVERITY_ORDER[b.severity] ?? 9),
+            )
+            .map((finding) => (
+              <div key={finding.finding_id}>
+                <h4>
+                  {finding.severity.toUpperCase()}: {finding.title}
+                </h4>
+
+                <p>
+                  {finding.file_path}:{finding.line}
+                </p>
+
+                {finding.source === 'combined' &&
+                  finding.static_finding_ids.length > 0 && (
+                    <p>
+                      Confirmed by: {finding.static_finding_ids.join(', ')}
+                    </p>
+                  )}
+
+                <p>{finding.explanation}</p>
+
+                {finding.suggested_fix && (
+                  <p>Suggested fix: {finding.suggested_fix}</p>
+                )}
+              </div>
+            ))}
+        </div>
+      )}
     </div>
   )
 }
