@@ -1,6 +1,6 @@
 import json
 
-from backend.services.submission_analysis import (
+from Static_checks_and_sec_rules.services.submission_analysis import (
     SanitizingClient,
     analyze_uploaded_submission,
 )

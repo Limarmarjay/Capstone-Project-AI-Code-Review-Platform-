@@ -5,11 +5,10 @@ from werkzeug.utils import secure_filename
 
 from app.db import db
 from app.tokens import require_auth
-from services.submission_analysis import (
+from Static_checks_and_sec_rules.services.submission_analysis import (
     SubmissionAnalysisError,
     analyze_uploaded_submission,
 )
-
 
 analysis_bp = Blueprint("analysis", __name__, url_prefix="/api/analyze")
 

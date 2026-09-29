@@ -1,12 +1,19 @@
 import json
 
 import pytest
+from pathlib import Path
 
-from backend.services.bandit_scanner import scan_python_file
-from backend.services.redactor import redact_findings, redact_text
+from Static_checks_and_sec_rules.services.bandit_scanner import scan_python_file
+from Static_checks_and_sec_rules.services.redactor import redact_findings, redact_text
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+STATIC_ROOT = REPO_ROOT / "Static_checks_and_sec_rules"
+SAMPLES = STATIC_ROOT / "samples"
+
 
 def test_secret_removed_from_scanner_results():
-    results = scan_python_file("samples/vulnerable.py")
+    results = scan_python_file(str(SAMPLES / "vulnerable.py"))
 
     redacted_results = redact_findings(results)
 
@@ -94,7 +101,7 @@ def test_secret_dictionary_redaction():
 
 
 def test_redaction_does_not_modify_original_results():
-    results = scan_python_file("samples/vulnerable.py")
+    results = scan_python_file(str(SAMPLES / "vulnerable.py"))
 
     redacted_results = redact_findings(results)
 
