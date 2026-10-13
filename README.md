@@ -40,19 +40,38 @@ an external model.
 
 ```bash
 # Normal run (offline mock LLM — no API key needed)
-python run_review.py tests/fixtures/mock_analysis_input.json
+python llm_review/run_review.py llm_review/tests/fixtures/mock_analysis_input.json
 
 # Demo the fallback paths
-python run_review.py tests/fixtures/mock_analysis_input.json --fail      # timeout
-python run_review.py tests/fixtures/mock_analysis_input.json --garbage   # bad output
+python llm_review/run_review.py llm_review/tests/fixtures/mock_analysis_input.json --fail      # timeout
+python llm_review/run_review.py llm_review/tests/fixtures/mock_analysis_input.json --garbage   # bad output
 
-# Real LLM (needs: pip install anthropic, and ANTHROPIC_API_KEY set)
-python run_review.py tests/fixtures/mock_analysis_input.json --real
+# Real LLM (needs ANTHROPIC_API_KEY — see Environment setup below)
+python llm_review/run_review.py llm_review/tests/fixtures/mock_analysis_input.json --real
 
 # Tests
-python tests/test_pipeline.py         # stdlib runner
-python -m pytest tests/ -v            # if pytest installed
+python llm_review/tests/test_pipeline.py   # stdlib runner
+python -m pytest llm_review/tests/ -v      # if pytest installed
 ```
+
+### Environment setup
+
+`--real` needs `ANTHROPIC_API_KEY` set. Easiest way locally:
+
+```bash
+cp .env.example .env    # then fill in ANTHROPIC_API_KEY
+pip install -r requirements.txt
+```
+
+`run_review.py` calls `load_dotenv()` on startup, so a `.env` file in the
+repo root (or any parent of your working directory) is picked up
+automatically — no need to `export` it yourself. `.env` is gitignored;
+`.env.example` lists every variable the project currently reads (not just
+the LLM one) and has no real values, so it's safe to commit.
+
+In CI or a real deployment, just set `ANTHROPIC_API_KEY` as an actual
+environment variable / secret — `load_dotenv()` is a no-op if there's no
+`.env` file to find, so nothing here depends on one existing.
 
 ## Contracts (shared with the team)
 
