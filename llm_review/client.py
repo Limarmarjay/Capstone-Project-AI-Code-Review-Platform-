@@ -1,13 +1,15 @@
 """LLM client abstraction.
 
-Two implementations behind one interface:
+Three implementations behind one interface:
 - MockLLMClient: deterministic, offline. Lets the whole pipeline run and be
   demoed with zero API key and zero network. Use this for your deliverable.
-- AnthropicLLMClient: real calls. Drop in when you have a key; swap the
-  provider for OpenAI by changing only this file.
+- AnthropicLLMClient: real calls to Claude. Drop in when you have a key.
+- OllamaLLMClient: real calls to a locally-running open-weight model (e.g.
+  Qwen2.5-Coder) via Ollama. No API key, no internet.
 
 The pipeline depends on the LLMClient protocol, not a concrete provider,
-so nothing else changes when you switch.
+so nothing else changes when you switch -- including to a new provider
+entirely (e.g. OpenAI): add a class here with the same complete() method.
 """
 from __future__ import annotations
 
@@ -173,6 +175,80 @@ class AnthropicLLMClient:
         )
         if not text.strip():
             raise LLMError("empty response")
+        return text
+
+
+class OllamaLLMClient:
+    """Local inference via Ollama's REST API -- no API key, no network
+    egress beyond localhost. Requires `ollama serve` to already be running
+    with the model pulled (e.g. `ollama pull qwen2.5-coder:7b`); this
+    client only calls the already-running server, it doesn't manage it.
+
+    Uses only the standard library (urllib) so llm_review doesn't gain a
+    new dependency just to support a second provider.
+    """
+
+    def __init__(
+        self,
+        model: str = "qwen2.5-coder:7b",
+        host: str = "http://localhost:11434",
+        timeout: float = 120.0,
+    ) -> None:
+        self.model = model
+        self.host = host.rstrip("/")
+        self.timeout = timeout
+
+    def complete(self, system: str, user: str) -> str:
+        import urllib.error
+        import urllib.request
+
+        payload = json.dumps({
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "stream": False,
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            f"{self.host}/api/chat",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                body = resp.read()
+        except TimeoutError as e:
+            raise LLMTimeout(f"Ollama request timed out after {self.timeout}s") from e
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode("utf-8", errors="replace")
+            if e.code == 404:
+                # Either the API path is wrong or, far more likely, the
+                # model hasn't been pulled -- retrying won't fix either.
+                raise LLMPermanentError(
+                    f"Ollama returned 404 for model {self.model!r} -- is it "
+                    f"pulled? Try: ollama pull {self.model}. Detail: {detail}"
+                ) from e
+            if e.code >= 500:
+                raise LLMTimeout(f"Ollama server error {e.code}: {detail}") from e
+            raise LLMPermanentError(f"Ollama rejected the request ({e.code}): {detail}") from e
+        except urllib.error.URLError as e:
+            # Most commonly: `ollama serve` isn't running at all. Treated
+            # as transient for consistency with AnthropicLLMClient's
+            # APIConnectionError handling, even though a fully-down local
+            # server won't come back up between this attempt and the next.
+            raise LLMTimeout(f"Could not reach Ollama at {self.host}: {e.reason}") from e
+
+        try:
+            parsed = json.loads(body)
+        except ValueError as e:
+            raise LLMError(f"Ollama returned non-JSON response: {e}") from e
+
+        text = parsed.get("message", {}).get("content", "")
+        if not text.strip():
+            raise LLMError("empty response from Ollama")
         return text
 
 

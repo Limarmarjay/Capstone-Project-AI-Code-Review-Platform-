@@ -4,16 +4,26 @@ Run:  python -m pytest tests/ -v
 (or with the stdlib: python tests/test_pipeline.py)
 """
 import contextlib
+import io
 import json
 import logging
 import os
 import sys
 import types
+import urllib.error
+import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from llm_review import review
-from llm_review.client import AnthropicLLMClient, LLMPermanentError, LLMTimeout, MockLLMClient
+from llm_review.client import (
+    AnthropicLLMClient,
+    LLMError,
+    LLMPermanentError,
+    LLMTimeout,
+    MockLLMClient,
+    OllamaLLMClient,
+)
 from llm_review.severity import assign_severity, score
 from llm_review.types import (
     Category,
@@ -165,6 +175,52 @@ def _blocked_import(module_name):
             sys.modules[module_name] = prev
         else:
             sys.modules.pop(module_name, None)
+
+
+@contextlib.contextmanager
+def _fake_urlopen(*, response_body=None, http_status=None, url_error_reason=None, simulate_timeout=False):
+    """Temporarily replace urllib.request.urlopen so OllamaLLMClient can be
+    exercised without a real Ollama server. client.py calls it as
+    `urllib.request.urlopen(...)` (module-qualified), so patching the
+    attribute on the shared module object is enough -- no need to touch
+    how client.py imports anything.
+
+    `simulate_timeout` is deliberately not named `timeout`: the fake
+    urlopen below takes a real `timeout=` kwarg (every caller passes one),
+    and reusing that name here would shadow it instead of controlling it.
+    """
+
+    class _FakeResponse:
+        def __init__(self, body):
+            self._body = body
+
+        def read(self):
+            return self._body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return False
+
+    def _urlopen(req, timeout=None):
+        if simulate_timeout:
+            raise TimeoutError("simulated timeout")
+        if http_status is not None:
+            raise urllib.error.HTTPError(
+                url=req.full_url, code=http_status, msg="error",
+                hdrs=None, fp=io.BytesIO(response_body or b"error detail"),
+            )
+        if url_error_reason is not None:
+            raise urllib.error.URLError(url_error_reason)
+        return _FakeResponse(response_body or b"{}")
+
+    prev = urllib.request.urlopen
+    urllib.request.urlopen = _urlopen
+    try:
+        yield
+    finally:
+        urllib.request.urlopen = prev
 
 
 def _load_input():
@@ -481,6 +537,80 @@ def test_unlisted_4xx_status_error_is_treated_as_permanent():
             pass
         else:
             raise AssertionError("expected LLMPermanentError for a non-5xx status error")
+
+
+# ---- OllamaLLMClient: local-model error classification -------------------
+
+def test_ollama_client_returns_message_content_on_success():
+    body = json.dumps({"message": {"role": "assistant", "content": '{"findings": []}'}}).encode()
+    with _fake_urlopen(response_body=body):
+        client = OllamaLLMClient()
+        result = client.complete("sys", "user")
+    assert result == '{"findings": []}'
+
+
+def test_ollama_client_404_is_treated_as_permanent():
+    with _fake_urlopen(http_status=404, response_body=b"model not found"):
+        client = OllamaLLMClient()
+        try:
+            client.complete("sys", "user")
+        except LLMPermanentError:
+            pass
+        else:
+            raise AssertionError("expected LLMPermanentError for a 404 (model not pulled)")
+
+
+def test_ollama_client_5xx_is_treated_as_transient():
+    with _fake_urlopen(http_status=503, response_body=b"server busy"):
+        client = OllamaLLMClient()
+        try:
+            client.complete("sys", "user")
+        except LLMTimeout:
+            pass
+        else:
+            raise AssertionError("expected LLMTimeout for a 5xx from Ollama")
+
+
+def test_ollama_client_connection_refused_is_treated_as_transient():
+    with _fake_urlopen(url_error_reason="connection refused"):
+        client = OllamaLLMClient()
+        try:
+            client.complete("sys", "user")
+        except LLMTimeout:
+            pass
+        else:
+            raise AssertionError("expected LLMTimeout when Ollama can't be reached")
+
+
+def test_ollama_client_timeout_is_treated_as_transient():
+    with _fake_urlopen(simulate_timeout=True):
+        client = OllamaLLMClient()
+        try:
+            client.complete("sys", "user")
+        except LLMTimeout:
+            pass
+        else:
+            raise AssertionError("expected LLMTimeout when the request times out")
+
+
+def test_ollama_client_empty_content_raises():
+    body = json.dumps({"message": {"role": "assistant", "content": ""}}).encode()
+    with _fake_urlopen(response_body=body):
+        client = OllamaLLMClient()
+        try:
+            client.complete("sys", "user")
+        except LLMError:
+            pass
+        else:
+            raise AssertionError("expected LLMError for empty content")
+
+
+def test_ollama_client_flows_through_run_llm_end_to_end():
+    body = json.dumps({"message": {"role": "assistant", "content": '{"findings": []}'}}).encode()
+    with _fake_urlopen(response_body=body):
+        findings, status = _run_llm(_empty_review_file(), OllamaLLMClient())
+    assert status == LLMStatus.SUCCESS
+    assert findings == []
 
 
 # ---- Retry: transient/unparseable retries, permanent never retries -------
