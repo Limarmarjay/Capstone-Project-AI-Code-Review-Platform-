@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from llm_review import review
 from llm_review.client import (
     AnthropicLLMClient,
+    FINDINGS_RESPONSE_SCHEMA,
     LLMError,
     LLMPermanentError,
     LLMTimeout,
@@ -188,7 +189,11 @@ def _fake_urlopen(*, response_body=None, http_status=None, url_error_reason=None
     `simulate_timeout` is deliberately not named `timeout`: the fake
     urlopen below takes a real `timeout=` kwarg (every caller passes one),
     and reusing that name here would shadow it instead of controlling it.
+
+    Yields the list of captured Request objects, so a test can inspect
+    what OllamaLLMClient actually sent (e.g. `captured[0].data`).
     """
+    captured_requests = []
 
     class _FakeResponse:
         def __init__(self, body):
@@ -204,6 +209,7 @@ def _fake_urlopen(*, response_body=None, http_status=None, url_error_reason=None
             return False
 
     def _urlopen(req, timeout=None):
+        captured_requests.append(req)
         if simulate_timeout:
             raise TimeoutError("simulated timeout")
         if http_status is not None:
@@ -218,7 +224,7 @@ def _fake_urlopen(*, response_body=None, http_status=None, url_error_reason=None
     prev = urllib.request.urlopen
     urllib.request.urlopen = _urlopen
     try:
-        yield
+        yield captured_requests
     finally:
         urllib.request.urlopen = prev
 
@@ -611,6 +617,35 @@ def test_ollama_client_flows_through_run_llm_end_to_end():
         findings, status = _run_llm(_empty_review_file(), OllamaLLMClient())
     assert status == LLMStatus.SUCCESS
     assert findings == []
+
+
+def test_ollama_client_request_includes_json_schema_format():
+    body = json.dumps({"message": {"role": "assistant", "content": '{"findings": []}'}}).encode()
+    with _fake_urlopen(response_body=body) as captured:
+        OllamaLLMClient().complete("sys", "user")
+
+    assert len(captured) == 1
+    sent = json.loads(captured[0].data)
+    assert sent["format"] == FINDINGS_RESPONSE_SCHEMA
+
+
+def test_ollama_client_schema_category_enum_matches_types_category():
+    enum_values = FINDINGS_RESPONSE_SCHEMA["properties"]["findings"]["items"]["properties"]["category"]["enum"]
+    assert set(enum_values) == {c.value for c in Category}
+
+
+def test_ollama_client_request_payload_shape_unchanged_otherwise():
+    body = json.dumps({"message": {"role": "assistant", "content": '{"findings": []}'}}).encode()
+    with _fake_urlopen(response_body=body) as captured:
+        OllamaLLMClient().complete("MY SYSTEM PROMPT", "MY USER PROMPT")
+
+    sent = json.loads(captured[0].data)
+    assert sent["messages"] == [
+        {"role": "system", "content": "MY SYSTEM PROMPT"},
+        {"role": "user", "content": "MY USER PROMPT"},
+    ]
+    assert sent["stream"] is False
+    assert sent["model"] == "qwen2.5-coder:7b"
 
 
 # ---- Retry: transient/unparseable retries, permanent never retries -------

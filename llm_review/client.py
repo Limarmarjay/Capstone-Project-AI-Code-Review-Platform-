@@ -17,6 +17,39 @@ import json
 import os
 from typing import Protocol
 
+from .types import Category
+
+# Constrains Ollama's output to this shape via its `format` request field
+# (JSON-Schema-based structured output / constrained decoding -- supported
+# regardless of which model is loaded, since it's enforced by the decoding
+# grammar, not the model's own training). The category enum is derived
+# from Category directly so this can't silently drift from types.py.
+# Matches the shape SYSTEM_PROMPT already asks for in prose; this just
+# makes it a hard constraint instead of a request the model can ignore.
+_FINDING_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "category": {"type": "string", "enum": [c.value for c in Category]},
+        "line": {"type": "integer"},
+        "title": {"type": "string"},
+        "explanation": {"type": "string"},
+        "suggested_fix": {"type": "string"},
+        "relates_to_static_finding_id": {"type": ["string", "null"]},
+    },
+    "required": [
+        "category", "line", "title", "explanation",
+        "suggested_fix", "relates_to_static_finding_id",
+    ],
+}
+
+FINDINGS_RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "findings": {"type": "array", "items": _FINDING_JSON_SCHEMA},
+    },
+    "required": ["findings"],
+}
+
 
 class LLMError(Exception):
     """Raised when the LLM call fails or returns unusable output."""
@@ -209,6 +242,7 @@ class OllamaLLMClient:
                 {"role": "user", "content": user},
             ],
             "stream": False,
+            "format": FINDINGS_RESPONSE_SCHEMA,
         }).encode("utf-8")
         req = urllib.request.Request(
             f"{self.host}/api/chat",
