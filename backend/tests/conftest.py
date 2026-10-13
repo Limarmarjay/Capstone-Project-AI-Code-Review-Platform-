@@ -33,7 +33,7 @@ import pytest  # noqa: E402
 from app import create_app  # noqa: E402
 from app.db import db as mongo_db  # noqa: E402
 
-_MANAGED_COLLECTIONS = ('user', 'submission', 'review', 'findings')
+_MANAGED_COLLECTIONS = ('user', 'submission', 'review', 'findings', 'GitHub_connection')
 
 
 @pytest.fixture()

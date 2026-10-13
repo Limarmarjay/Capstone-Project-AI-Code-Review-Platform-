@@ -13,6 +13,7 @@ MAX_CHANGED_LINES = 5_000
 SOURCE_TYPES = {
     "patch": InputType.PATCH_FILE.value,
     "diff": InputType.GIT_DIFF.value,
+    "pull_request": InputType.PULL_REQUEST.value,
 }
 
 

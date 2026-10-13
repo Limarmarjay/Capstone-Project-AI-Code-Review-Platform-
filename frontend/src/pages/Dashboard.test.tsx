@@ -29,6 +29,7 @@ describe('Dashboard upload flow', () => {
   beforeEach(() => {
     localStorage.clear()
     vi.resetAllMocks()
+    vi.mocked(api.getGithubStatus).mockResolvedValue({ connected: false })
   })
 
   it('rejects a file over the 10 MB size limit without calling the API', async () => {
@@ -132,5 +133,97 @@ describe('Dashboard upload flow', () => {
 
     clickSpy.mockRestore()
     vi.unstubAllGlobals()
+  })
+})
+
+describe('Dashboard GitHub panel', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    vi.resetAllMocks()
+  })
+
+  it('shows a token field when GitHub is not connected', async () => {
+    vi.mocked(api.getGithubStatus).mockResolvedValue({ connected: false })
+
+    renderDashboard()
+
+    expect(await screen.findByLabelText(/Personal Access Token/i)).toBeInTheDocument()
+    expect(api.listGithubRepos).not.toHaveBeenCalled()
+  })
+
+  it('connects with a token and then lists repos', async () => {
+    vi.mocked(api.getGithubStatus).mockResolvedValue({ connected: false })
+    vi.mocked(api.connectGithub).mockResolvedValue({ connected: true })
+    vi.mocked(api.listGithubRepos).mockResolvedValue([{ id: 1, full_name: 'alice/project' }])
+
+    renderDashboard()
+    const user = userEvent.setup()
+
+    const tokenInput = await screen.findByLabelText(/Personal Access Token/i)
+    await user.type(tokenInput, 'ghp_mytoken')
+    await user.click(screen.getByRole('button', { name: /Connect GitHub/i }))
+
+    expect(api.connectGithub).toHaveBeenCalledWith('test-token', 'ghp_mytoken')
+    expect(await screen.findByLabelText('Repository')).toBeInTheDocument()
+    expect(await screen.findByText('alice/project')).toBeInTheDocument()
+  })
+
+  it('shows a connect error without marking GitHub as connected', async () => {
+    vi.mocked(api.getGithubStatus).mockResolvedValue({ connected: false })
+    vi.mocked(api.connectGithub).mockRejectedValue(new Error('That token could not be verified with GitHub.'))
+
+    renderDashboard()
+    const user = userEvent.setup()
+
+    const tokenInput = await screen.findByLabelText(/Personal Access Token/i)
+    await user.type(tokenInput, 'bad-token')
+    await user.click(screen.getByRole('button', { name: /Connect GitHub/i }))
+
+    expect(
+      await screen.findByText('That token could not be verified with GitHub.'),
+    ).toBeInTheDocument()
+    expect(screen.queryByLabelText('Repository')).not.toBeInTheDocument()
+  })
+
+  it('lists pull requests once a repo is selected, and submits the chosen PR', async () => {
+    vi.mocked(api.getGithubStatus).mockResolvedValue({ connected: true })
+    vi.mocked(api.listGithubRepos).mockResolvedValue([{ id: 1, full_name: 'alice/project' }])
+    vi.mocked(api.listGithubPulls).mockResolvedValue([
+      { id: 10, number: 42, title: 'Fix bug', html_url: 'https://github.com/alice/project/pull/42' },
+    ])
+    vi.mocked(api.submitPullRequest).mockResolvedValue({
+      _id: 'sub-pr-1',
+      submission_type: 'pull_request',
+      filename: 'https://github.com/alice/project/pull/42',
+      content: '',
+      status: 'parsed',
+      review: {
+        submission_id: 'sub-pr-1',
+        review_status: 'completed',
+        llm_status: 'success',
+        overall_score: 88,
+        summary: 'Looks fine.',
+        findings: [],
+      },
+      scan_issues: {},
+    })
+
+    renderDashboard()
+    const user = userEvent.setup()
+
+    const repoSelect = await screen.findByLabelText('Repository')
+    await user.selectOptions(repoSelect, 'alice/project')
+
+    const pullSelect = await screen.findByLabelText('Pull Request')
+    expect(await screen.findByText('#42 Fix bug')).toBeInTheDocument()
+    await user.selectOptions(pullSelect, '42')
+
+    await user.click(screen.getByRole('button', { name: /Submit for Review/i }))
+
+    expect(api.submitPullRequest).toHaveBeenCalledWith(
+      'test-token',
+      expect.objectContaining({ number: 42 }),
+    )
+    expect(await screen.findByText(/Score: 88\/100/)).toBeInTheDocument()
   })
 })

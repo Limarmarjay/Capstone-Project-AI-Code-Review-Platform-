@@ -19,6 +19,7 @@ from bson.errors import InvalidId
 from flask import Blueprint, g, jsonify, request
 from werkzeug.utils import secure_filename
 
+from app.crypto import decrypt_token
 from app.db import db
 from app.tokens import require_auth
 
@@ -30,7 +31,7 @@ for _path in (_REPO_ROOT, _REPO_ROOT / 'Static_checks_and_sec_rules'):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 
-from repo_diff_pipeline import ingestion, validation  # noqa: E402
+from repo_diff_pipeline import github_client, ingestion, validation  # noqa: E402
 from repo_diff_pipeline.diff_parser import DiffParseError, parse_diff  # noqa: E402
 from services.submission_analysis import (  # noqa: E402
     SubmissionAnalysisError,
@@ -43,6 +44,7 @@ submission_bp = Blueprint('submission', __name__, url_prefix='/api/submission')
 submissions = db['submission']
 reviews = db['review']
 findings_collection = db['findings']
+github_connections = db['GitHub_connection']
 
 SEVERITY_LEVELS = ('critical', 'high', 'medium', 'low')
 
@@ -209,14 +211,29 @@ def create():
         return jsonify({'error': 'Request body must be a JSON object.'}), 400
 
     submission_type = body.get('submission_type')
-    if submission_type not in ('patch', 'diff'):
-        return jsonify({'error': "submission_type must be 'patch' or 'diff'."}), 400
+    if submission_type not in ('patch', 'diff', 'pull_request'):
+        return jsonify({'error': "submission_type must be 'patch', 'diff', or 'pull_request'."}), 400
 
-    content = body.get('content')
-    if not isinstance(content, str):
-        return jsonify({'error': "'content' is required for patch/diff submissions."}), 400
+    if submission_type == 'pull_request':
+        pr_url = body.get('pr_url')
+        if not isinstance(pr_url, str) or not pr_url:
+            return jsonify({'error': "'pr_url' is required for pull_request submissions."}), 400
 
-    raw_filename = body.get('filename')
+        connection = github_connections.find_one({'user_id': g.user_id})
+        if not connection:
+            return jsonify({'error': 'GitHub is not connected.'}), 400
+
+        content = None
+        raw_filename = pr_url
+        ingest_kwargs = {'pr_url': pr_url, 'github_token': decrypt_token(connection['token'])}
+    else:
+        content = body.get('content')
+        if not isinstance(content, str):
+            return jsonify({'error': "'content' is required for patch/diff submissions."}), 400
+
+        raw_filename = body.get('filename')
+        ingest_kwargs = {'patch_text': content}
+
     filename = (secure_filename(raw_filename) if isinstance(raw_filename, str) else '') or 'submission.patch'
 
     object_id = ObjectId()
@@ -233,7 +250,7 @@ def create():
 
     parsed = None
     try:
-        with ingestion.ingest_submission(patch_text=content) as ingested:
+        with ingestion.ingest_submission(**ingest_kwargs) as ingested:
             block_reason = validation.validate_input(ingested.diff_text)
             if block_reason is None:
                 try:
@@ -255,7 +272,7 @@ def create():
                     'head_ref': ingested.head_ref,
                     'files': _file_summary(parsed.files),
                 })
-    except ingestion.IngestionError as e:
+    except (ingestion.IngestionError, github_client.GitHubError) as e:
         record.update({'status': 'blocked', 'block_reason': str(e)})
 
     # 'submission' is done once ingestion/parsing is settled — its status
