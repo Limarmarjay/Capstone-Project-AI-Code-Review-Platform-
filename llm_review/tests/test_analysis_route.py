@@ -4,9 +4,13 @@ from pathlib import Path
 from bson import ObjectId
 
 
-BACKEND_PATH = Path(__file__).resolve().parents[1] / "backend"
-if str(BACKEND_PATH) not in sys.path:
-    sys.path.insert(0, str(BACKEND_PATH))
+REPO_ROOT = Path(__file__).resolve().parents[2]
+BACKEND_PATH = REPO_ROOT / "backend"
+
+for path in (REPO_ROOT, BACKEND_PATH):
+    path_str = str(path)
+    if path_str not in sys.path:
+        sys.path.insert(0, path_str)
 
 from app import create_app
 from app.tokens import create_token
