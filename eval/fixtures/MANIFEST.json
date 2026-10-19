@@ -1,0 +1,7 @@
+{
+  "sql-injection-basic": {
+    "analysis_input_hash": "sha256:e289a4f919d089cd15b7afad00f8b584f5ff0891f9cbaa90c1caa14a74353440",
+    "hash_covers": "files[].hunks[].diff text only, concatenated per file in order",
+    "added": "2026-10-19"
+  }
+}
