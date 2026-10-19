@@ -28,6 +28,26 @@ from dotenv import load_dotenv
 from llm_review import review
 from llm_review.client import AnthropicLLMClient, MockLLMClient, OllamaLLMClient
 
+DEFAULT_OLLAMA_TIMEOUT = 300.0
+
+
+def _default_ollama_timeout() -> float:
+    """Read $OLLAMA_TIMEOUT_SECONDS, falling back to DEFAULT_OLLAMA_TIMEOUT
+    if it's unset, blank, or not a valid number -- a typo in .env should
+    never crash the CLI, just fall back with a warning."""
+    raw = os.environ.get("OLLAMA_TIMEOUT_SECONDS", "").strip()
+    if not raw:
+        return DEFAULT_OLLAMA_TIMEOUT
+    try:
+        return float(raw)
+    except ValueError:
+        print(
+            f"Warning: OLLAMA_TIMEOUT_SECONDS={raw!r} is not a valid number; "
+            f"using {DEFAULT_OLLAMA_TIMEOUT}",
+            file=sys.stderr,
+        )
+        return DEFAULT_OLLAMA_TIMEOUT
+
 
 def main() -> int:
     # Loads ANTHROPIC_API_KEY (and anything else in .env) from a .env file
@@ -43,6 +63,11 @@ def main() -> int:
     p.add_argument(
         "--ollama-host", default="http://localhost:11434", help="Ollama server URL (with --local)"
     )
+    p.add_argument(
+        "--timeout", type=float, default=_default_ollama_timeout(),
+        help=f"Ollama request timeout in seconds (with --local). Default "
+             f"{DEFAULT_OLLAMA_TIMEOUT}, or $OLLAMA_TIMEOUT_SECONDS.",
+    )
     p.add_argument("--fail", action="store_true", help="Simulate LLM timeout")
     p.add_argument("--garbage", action="store_true", help="Simulate invalid LLM output")
     p.add_argument("-o", "--output", help="Write output JSON to this path")
@@ -57,7 +82,7 @@ def main() -> int:
     if args.real:
         client = AnthropicLLMClient()
     elif args.local:
-        client = OllamaLLMClient(model=args.model, host=args.ollama_host)
+        client = OllamaLLMClient(model=args.model, host=args.ollama_host, timeout=args.timeout)
     else:
         client = MockLLMClient(fail=args.fail, garbage=args.garbage)
 

@@ -225,7 +225,7 @@ class OllamaLLMClient:
         self,
         model: str = "qwen2.5-coder:7b",
         host: str = "http://localhost:11434",
-        timeout: float = 120.0,
+        timeout: float = 300.0,
     ) -> None:
         self.model = model
         self.host = host.rstrip("/")

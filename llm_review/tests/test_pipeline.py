@@ -648,6 +648,32 @@ def test_ollama_client_request_payload_shape_unchanged_otherwise():
     assert sent["model"] == "qwen2.5-coder:7b"
 
 
+# ---- run_review.py CLI: safe OLLAMA_TIMEOUT_SECONDS parsing --------------
+
+def test_default_ollama_timeout_falls_back_on_blank_or_invalid_value():
+    from llm_review.run_review import DEFAULT_OLLAMA_TIMEOUT, _default_ollama_timeout
+
+    prev = os.environ.get("OLLAMA_TIMEOUT_SECONDS")
+    try:
+        os.environ.pop("OLLAMA_TIMEOUT_SECONDS", None)
+        assert _default_ollama_timeout() == DEFAULT_OLLAMA_TIMEOUT  # unset
+
+        for blank in ("", "   "):
+            os.environ["OLLAMA_TIMEOUT_SECONDS"] = blank
+            assert _default_ollama_timeout() == DEFAULT_OLLAMA_TIMEOUT
+
+        os.environ["OLLAMA_TIMEOUT_SECONDS"] = "not-a-number"
+        assert _default_ollama_timeout() == DEFAULT_OLLAMA_TIMEOUT  # invalid, doesn't crash
+
+        os.environ["OLLAMA_TIMEOUT_SECONDS"] = "450"
+        assert _default_ollama_timeout() == 450.0  # valid override still works
+    finally:
+        if prev is not None:
+            os.environ["OLLAMA_TIMEOUT_SECONDS"] = prev
+        else:
+            os.environ.pop("OLLAMA_TIMEOUT_SECONDS", None)
+
+
 # ---- Retry: transient/unparseable retries, permanent never retries -------
 
 class _FlakyThenOK:
