@@ -161,5 +161,52 @@ Separately report, not folded into the above:
    `redaction_applied: true`).
 3. Write `expected_findings.json` (validate every `category` against
    `llm_review.types.Category` first).
-4. Add an entry to `MANIFEST.json`: `sha256` of the concatenated
+4. Verify the diff hunk programmatically before trusting it: walk the diff
+   text and confirm `added_lines`/`removed_lines`/`context_lines`/
+   `start_line`/`end_line` actually match what the text says, rather than
+   counting by hand. A hand-miscounted hunk is the single most common
+   mistake when writing these fixtures.
+5. If the fixture's diff touches anything secret-shaped (a variable named
+   like a credential, a quoted literal next to one), run the real
+   `repo_diff_pipeline.secrets_scanner.scan_and_redact` and
+   `Static_checks_and_sec_rules.services.redactor.redact_text` over it and
+   confirm neither would change it further -- see **Known limitation**
+   below before assuming a clean result means no secret-shaped content at
+   all.
+6. Add an entry to `MANIFEST.json`: `sha256` of the concatenated
    `files[].hunks[].diff` text (in file/hunk order), plus the date added.
+
+## Known limitation: the redaction scanner can re-flag its own marker
+
+`repo_diff_pipeline.secrets_scanner`'s `generic_secret_assignment` pattern
+matches on **keyword name + quoted-value length**, not value content: any
+assignment to a variable/kwarg named `secret`, `password`, `passwd`, or `pwd`
+with a quoted value 8+ characters long matches, regardless of what that
+value actually is. Its own redaction marker, `"[REDACTED]"`, is 10
+characters -- long enough to satisfy that same pattern. So a line like
+`password="[REDACTED]"` re-matches `generic_secret_assignment` even though
+it's already fully redacted; a second pass would mangle it further
+(`pattern.sub` replaces the whole `keyword=...quoted value...` match, not
+just the value).
+
+This surfaced while building `sql-injection-basic`'s incidental
+`db.connect(...)` call, fixed here by renaming that kwarg away from
+`password` (to `credentials`) rather than touching the scanner -- the
+eval target on that fixture was the SQL injection, not the connection
+call's kwarg name. `python-hardcoded-secret` and `java-hardcoded-secret`
+don't hit this, not because the limitation doesn't apply to them, but
+because their variable names (`api_key`, `SIGNING_KEY`) don't match any
+of `secrets_scanner`'s eight keyword patterns in the first place --
+`generic_api_key`'s value-class is narrower (`[A-Za-z0-9_\-]{16,}`, no
+brackets, 16+ chars) and `[REDACTED]`'s brackets and length don't satisfy
+it.
+
+Not fixed here, and not in scope for `eval/` to fix: this is a property
+of `repo_diff_pipeline/secrets_scanner.py`, owned by its own team, and
+the scanner's own docstring already says it's "pattern-based and
+best-effort, not a guarantee." When adding a fixture with a
+`secret`/`password`/`passwd`/`pwd`-named assignment, know that
+re-running the real scanner over it is not sufficient on its own to
+prove it's clean -- check the match (or lack of one) against the
+specific pattern list in `secrets_scanner.py`, the way this file's
+history did.
