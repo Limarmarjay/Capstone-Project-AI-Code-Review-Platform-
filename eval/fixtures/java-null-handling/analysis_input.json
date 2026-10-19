@@ -1,0 +1,34 @@
+{
+  "submission_id": "java-null-handling",
+  "source_type": "pull_request",
+  "repository": "eval-fixtures/synthetic",
+  "redaction_applied": true,
+  "files": [
+    {
+      "file_path": "src/main/java/com/example/orders/OrderService.java",
+      "language": "java",
+      "hunks": [
+        {
+          "hunk_id": "h1",
+          "start_line": 22,
+          "end_line": 28,
+          "diff": "@@ -22,2 +22,7 @@\n     }\n+\n+    public String getCustomerEmail(int orderId) {\n+        Order order = repository.findById(orderId);\n+        return order.getCustomer().getEmail();\n+    }\n }",
+          "added_lines": [23, 24, 25, 26, 27],
+          "removed_lines": [],
+          "context_lines": [22, 28]
+        }
+      ],
+      "static_findings": [
+        {
+          "finding_id": "sf_001",
+          "tool": "spotbugs",
+          "rule_id": "NP_NULL_ON_SOME_PATH",
+          "category": "bug",
+          "message": "Possible null pointer dereference of order, which could be null from findById",
+          "file_path": "src/main/java/com/example/orders/OrderService.java",
+          "line": 26
+        }
+      ]
+    }
+  ]
+}

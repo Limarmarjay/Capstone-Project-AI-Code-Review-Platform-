@@ -1,0 +1,31 @@
+{
+  "case_id": "python-hardcoded-secret",
+  "must_catch": [
+    {
+      "id": "mc1",
+      "category": "security",
+      "line": 20,
+      "relates_to_static_finding_id": "sf_001",
+      "reference_title": "Hardcoded API key",
+      "reference_explanation": "The payment gateway API key is a literal string in source code. Anyone with repo access (or a leaked copy of the source) gets the live key.",
+      "reference_suggested_fix": "Load the key from an environment variable or a secrets manager, never a literal in source."
+    }
+  ],
+  "may_catch": [
+    {
+      "id": "oc1",
+      "category": "missing_docs",
+      "line": 19,
+      "relates_to_static_finding_id": null,
+      "reference_title": "Missing docstring on get_payment_client",
+      "reference_explanation": "The new function has no docstring explaining what gateway it returns or when to call it.",
+      "reference_suggested_fix": "Add a short docstring."
+    }
+  ],
+  "must_not_flag": [
+    {
+      "line": 22,
+      "note": "def process_order(order_id): is unchanged context shown for orientation, not part of this diff."
+    }
+  ]
+}

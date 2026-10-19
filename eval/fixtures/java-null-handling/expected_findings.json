@@ -1,0 +1,29 @@
+{
+  "case_id": "java-null-handling",
+  "must_catch": [
+    {
+      "id": "mc1",
+      "category": "bug",
+      "line": 26,
+      "relates_to_static_finding_id": "sf_001",
+      "reference_title": "Possible null pointer dereference",
+      "reference_explanation": "repository.findById can return null for an unknown orderId; calling .getCustomer() on it would throw NullPointerException.",
+      "reference_suggested_fix": "Check `if (order == null)` and return a clear error or empty result before dereferencing it."
+    }
+  ],
+  "may_catch": [
+    {
+      "id": "oc1",
+      "category": "missing_tests",
+      "line": 24,
+      "relates_to_static_finding_id": null,
+      "reference_title": "No test for the unknown-order case",
+      "reference_explanation": "There's no test covering getCustomerEmail when findById returns null.",
+      "reference_suggested_fix": "Add a test asserting the method's behavior for an unknown orderId."
+    }
+  ],
+  "must_not_flag": [
+    {"line": 22, "note": "Closing brace of the previous method, unchanged context shown for orientation."},
+    {"line": 28, "note": "Class closing brace, unchanged context shown for orientation."}
+  ]
+}

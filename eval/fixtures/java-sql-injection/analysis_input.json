@@ -1,0 +1,34 @@
+{
+  "submission_id": "java-sql-injection",
+  "source_type": "pull_request",
+  "repository": "eval-fixtures/synthetic",
+  "redaction_applied": true,
+  "files": [
+    {
+      "file_path": "src/main/java/com/example/orders/OrderRepository.java",
+      "language": "java",
+      "hunks": [
+        {
+          "hunk_id": "h1",
+          "start_line": 29,
+          "end_line": 35,
+          "diff": "@@ -29,2 +29,7 @@\n     }\n+\n+    public List<Order> findByCustomerName(String name) {\n+        String sql = \"SELECT * FROM orders WHERE customer_name = '\" + name + \"'\";\n+        return jdbcTemplate.query(sql, orderRowMapper);\n+    }\n }",
+          "added_lines": [30, 31, 32, 33, 34],
+          "removed_lines": [],
+          "context_lines": [29, 35]
+        }
+      ],
+      "static_findings": [
+        {
+          "finding_id": "sf_001",
+          "tool": "semgrep",
+          "rule_id": "java.lang.security.audit.sql-injection",
+          "category": "security",
+          "message": "SQL query built via string concatenation of user-controlled input",
+          "file_path": "src/main/java/com/example/orders/OrderRepository.java",
+          "line": 32
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "submission_id": "python-resource-leak",
+  "source_type": "pull_request",
+  "repository": "eval-fixtures/synthetic",
+  "redaction_applied": true,
+  "files": [
+    {
+      "file_path": "src/reports/exporter.py",
+      "language": "python",
+      "hunks": [
+        {
+          "hunk_id": "h1",
+          "start_line": 5,
+          "end_line": 9,
+          "diff": "@@ -5,2 +5,5 @@\n \n+def write_report(path, rows):\n+    f = open(path, \"w\")\n+    f.write(\"\\n\".join(rows))\n def read_header(path):",
+          "added_lines": [6, 7, 8],
+          "removed_lines": [],
+          "context_lines": [5, 9]
+        }
+      ],
+      "static_findings": [
+        {
+          "finding_id": "sf_001",
+          "tool": "pylint",
+          "rule_id": "R1732",
+          "category": "code_smell",
+          "message": "Consider using 'with' for resource-allocating operations",
+          "file_path": "src/reports/exporter.py",
+          "line": 7
+        }
+      ]
+    }
+  ]
+}

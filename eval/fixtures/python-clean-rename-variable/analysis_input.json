@@ -1,0 +1,24 @@
+{
+  "submission_id": "python-clean-rename-variable",
+  "source_type": "pull_request",
+  "repository": "eval-fixtures/synthetic",
+  "redaction_applied": true,
+  "files": [
+    {
+      "file_path": "src/utils/formatting.py",
+      "language": "python",
+      "hunks": [
+        {
+          "hunk_id": "h1",
+          "start_line": 3,
+          "end_line": 4,
+          "diff": "@@ -3,2 +3,2 @@\n-def format_price(amt):\n-    return f\"${amt:.2f}\"\n+def format_price(amount):\n+    return f\"${amount:.2f}\"",
+          "added_lines": [3, 4],
+          "removed_lines": [3, 4],
+          "context_lines": []
+        }
+      ],
+      "static_findings": []
+    }
+  ]
+}

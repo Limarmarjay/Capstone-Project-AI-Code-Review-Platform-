@@ -1,0 +1,10 @@
+{
+  "case_id": "python-clean-add-logging",
+  "must_catch": [],
+  "may_catch": [],
+  "must_not_flag": [
+    {"line": 10, "note": "Unchanged function signature, shown as context."},
+    {"line": 11, "note": "New logging line is correct and harmless -- a debug-level log of an item count introduces no bug, security issue, or smell."},
+    {"line": 12, "note": "Unchanged return statement, shown as context."}
+  ]
+}

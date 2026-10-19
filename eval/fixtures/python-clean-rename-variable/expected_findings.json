@@ -1,0 +1,9 @@
+{
+  "case_id": "python-clean-rename-variable",
+  "must_catch": [],
+  "may_catch": [],
+  "must_not_flag": [
+    {"line": 3, "note": "Pure rename of the parameter (amt -> amount); the signature is correct and harmless."},
+    {"line": 4, "note": "Pure rename of the parameter usage; behavior is unchanged."}
+  ]
+}

@@ -1,13 +1,15 @@
 """LLM client abstraction.
 
-Two implementations behind one interface:
+Three implementations behind one interface:
 - MockLLMClient: deterministic, offline. Lets the whole pipeline run and be
   demoed with zero API key and zero network. Use this for your deliverable.
-- AnthropicLLMClient: real calls. Drop in when you have a key; swap the
-  provider for OpenAI by changing only this file.
+- AnthropicLLMClient: real calls to Claude. Drop in when you have a key.
+- OllamaLLMClient: real calls to a locally-running open-weight model (e.g.
+  Qwen2.5-Coder) via Ollama. No API key, no internet.
 
 The pipeline depends on the LLMClient protocol, not a concrete provider,
-so nothing else changes when you switch.
+so nothing else changes when you switch -- including to a new provider
+entirely (e.g. OpenAI): add a class here with the same complete() method.
 """
 from __future__ import annotations
 
@@ -15,13 +17,53 @@ import json
 import os
 from typing import Protocol
 
+from .types import Category
+
+# Constrains Ollama's output to this shape via its `format` request field
+# (JSON-Schema-based structured output / constrained decoding -- supported
+# regardless of which model is loaded, since it's enforced by the decoding
+# grammar, not the model's own training). The category enum is derived
+# from Category directly so this can't silently drift from types.py.
+# Matches the shape SYSTEM_PROMPT already asks for in prose; this just
+# makes it a hard constraint instead of a request the model can ignore.
+_FINDING_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "category": {"type": "string", "enum": [c.value for c in Category]},
+        "line": {"type": "integer"},
+        "title": {"type": "string"},
+        "explanation": {"type": "string"},
+        "suggested_fix": {"type": "string"},
+        "relates_to_static_finding_id": {"type": ["string", "null"]},
+    },
+    "required": [
+        "category", "line", "title", "explanation",
+        "suggested_fix", "relates_to_static_finding_id",
+    ],
+}
+
+FINDINGS_RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "findings": {"type": "array", "items": _FINDING_JSON_SCHEMA},
+    },
+    "required": ["findings"],
+}
+
 
 class LLMError(Exception):
     """Raised when the LLM call fails or returns unusable output."""
 
 
 class LLMTimeout(LLMError):
-    """Raised specifically on timeout, so the pipeline can distinguish it."""
+    """Transient failure worth retrying: timeout, rate limit, connection
+    error, or a 5xx from the API."""
+
+
+class LLMPermanentError(LLMError):
+    """Non-retryable failure: bad credentials, permission, a malformed
+    request, a missing API key, or the SDK not being installed. Retrying
+    these wastes latency without any chance of succeeding."""
 
 
 class LLMClient(Protocol):
@@ -37,16 +79,33 @@ class MockLLMClient:
     so the pipeline produces real-looking output without a network call.
     """
 
-    def __init__(self, *, fail: bool = False, garbage: bool = False) -> None:
-        # fail/garbage let you exercise the fallback path in tests.
+    def __init__(
+        self,
+        *,
+        fail: bool = False,
+        garbage: bool = False,
+        permanent_fail: bool = False,
+        bad_shape: bool = False,
+    ) -> None:
+        # fail/garbage/permanent_fail/bad_shape let you exercise the
+        # fallback and retry paths in tests.
         self.fail = fail
         self.garbage = garbage
+        self.permanent_fail = permanent_fail
+        self.bad_shape = bad_shape
+        self.call_count = 0  # lets retry tests assert how many attempts ran
 
     def complete(self, system: str, user: str) -> str:
+        self.call_count += 1
+        if self.permanent_fail:
+            raise LLMPermanentError("mock: simulated permanent failure (e.g. bad API key)")
         if self.fail:
             raise LLMTimeout("mock: simulated timeout")
         if self.garbage:
             return "Sure! Here is your review: (not json at all)"
+        if self.bad_shape:
+            # Valid JSON, wrong shape: "findings" isn't a list of dicts.
+            return json.dumps({"findings": None})
 
         findings = []
         # Cheap heuristics so the mock reacts to the prompt content.
@@ -101,26 +160,47 @@ class AnthropicLLMClient:
         try:
             import anthropic  # lazy
         except ImportError as e:  # pragma: no cover
-            raise LLMError("anthropic SDK not installed") from e
+            raise LLMPermanentError("anthropic SDK not installed") from e
 
         api_key = os.environ.get("ANTHROPIC_API_KEY")
         if not api_key:
-            raise LLMError("ANTHROPIC_API_KEY not set")
+            raise LLMPermanentError("ANTHROPIC_API_KEY not set")
 
-        client = anthropic.Anthropic(api_key=api_key, timeout=self.timeout)
         try:
+            client = anthropic.Anthropic(api_key=api_key, timeout=self.timeout)
             resp = client.messages.create(
                 model=self.model,
                 max_tokens=1500,
                 system=system,
                 messages=[{"role": "user", "content": user}],
             )
-        except Exception as e:  # network, timeout, rate limit, etc.
-            # Normalize everything into our own error types.
-            name = type(e).__name__.lower()
-            if "timeout" in name:
+        except anthropic.APITimeoutError as e:
+            raise LLMTimeout(str(e)) from e
+        except anthropic.RateLimitError as e:
+            raise LLMTimeout(str(e)) from e
+        except anthropic.APIConnectionError as e:
+            # Broader network failures; APITimeoutError (a subclass) is
+            # caught above so it isn't swallowed here.
+            raise LLMTimeout(str(e)) from e
+        except anthropic.AuthenticationError as e:
+            raise LLMPermanentError(str(e)) from e
+        except anthropic.PermissionDeniedError as e:
+            raise LLMPermanentError(str(e)) from e
+        except anthropic.NotFoundError as e:
+            raise LLMPermanentError(str(e)) from e
+        except anthropic.BadRequestError as e:
+            raise LLMPermanentError(str(e)) from e
+        except anthropic.APIStatusError as e:
+            # Any other HTTP-status error (e.g. a 5xx not covered above):
+            # treat server errors as transient, other status codes as
+            # permanent, since retrying a non-5xx status is unlikely to help.
+            if e.status_code >= 500:
                 raise LLMTimeout(str(e)) from e
-            raise LLMError(str(e)) from e
+            raise LLMPermanentError(str(e)) from e
+        except Exception as e:
+            # Constructor failures and anything else unclassified: fail
+            # fast rather than assume it's safe to retry.
+            raise LLMPermanentError(str(e)) from e
 
         # Concatenate text blocks. Checking block.type directly (not via
         # getattr) lets the type checker narrow the union to TextBlock.
@@ -129,6 +209,81 @@ class AnthropicLLMClient:
         )
         if not text.strip():
             raise LLMError("empty response")
+        return text
+
+
+class OllamaLLMClient:
+    """Local inference via Ollama's REST API -- no API key, no network
+    egress beyond localhost. Requires `ollama serve` to already be running
+    with the model pulled (e.g. `ollama pull qwen2.5-coder:7b`); this
+    client only calls the already-running server, it doesn't manage it.
+
+    Uses only the standard library (urllib) so llm_review doesn't gain a
+    new dependency just to support a second provider.
+    """
+
+    def __init__(
+        self,
+        model: str = "qwen2.5-coder:7b",
+        host: str = "http://localhost:11434",
+        timeout: float = 300.0,
+    ) -> None:
+        self.model = model
+        self.host = host.rstrip("/")
+        self.timeout = timeout
+
+    def complete(self, system: str, user: str) -> str:
+        import urllib.error
+        import urllib.request
+
+        payload = json.dumps({
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "stream": False,
+            "format": FINDINGS_RESPONSE_SCHEMA,
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            f"{self.host}/api/chat",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                body = resp.read()
+        except TimeoutError as e:
+            raise LLMTimeout(f"Ollama request timed out after {self.timeout}s") from e
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode("utf-8", errors="replace")
+            if e.code == 404:
+                # Either the API path is wrong or, far more likely, the
+                # model hasn't been pulled -- retrying won't fix either.
+                raise LLMPermanentError(
+                    f"Ollama returned 404 for model {self.model!r} -- is it "
+                    f"pulled? Try: ollama pull {self.model}. Detail: {detail}"
+                ) from e
+            if e.code >= 500:
+                raise LLMTimeout(f"Ollama server error {e.code}: {detail}") from e
+            raise LLMPermanentError(f"Ollama rejected the request ({e.code}): {detail}") from e
+        except urllib.error.URLError as e:
+            # Most commonly: `ollama serve` isn't running at all. Treated
+            # as transient for consistency with AnthropicLLMClient's
+            # APIConnectionError handling, even though a fully-down local
+            # server won't come back up between this attempt and the next.
+            raise LLMTimeout(f"Could not reach Ollama at {self.host}: {e.reason}") from e
+
+        try:
+            parsed = json.loads(body)
+        except ValueError as e:
+            raise LLMError(f"Ollama returned non-JSON response: {e}") from e
+
+        text = parsed.get("message", {}).get("content", "")
+        if not text.strip():
+            raise LLMError("empty response from Ollama")
         return text
 
 

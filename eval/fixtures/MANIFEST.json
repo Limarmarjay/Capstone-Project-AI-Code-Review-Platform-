@@ -1,0 +1,77 @@
+{
+  "sql-injection-basic": {
+    "analysis_input_hash": "sha256:973356ef4f574e924ab16b68e7767f95c5068a2486f2e8c9865707b5e769a306",
+    "hash_covers": "files[].hunks[].diff text only, concatenated per file in order",
+    "added": "2026-10-19"
+  },
+  "python-hardcoded-secret": {
+    "analysis_input_hash": "sha256:c3aad17095bd7e95b29d46fe1ca16fe7e6d1a0ca067020931d45f9cef75ca869",
+    "hash_covers": "files[].hunks[].diff text only, concatenated per file in order",
+    "added": "2026-10-19"
+  },
+  "java-sql-injection": {
+    "analysis_input_hash": "sha256:59f657a403b8a2449f73e1c769572751e1621d2adafcfd764b3e727f89269356",
+    "hash_covers": "files[].hunks[].diff text only, concatenated per file in order",
+    "added": "2026-10-19"
+  },
+  "python-clean-add-logging": {
+    "analysis_input_hash": "sha256:ee054a1b81ff6f1f1dd71615ab5c844f88355f0dccb89f252f9754a61e7eed7b",
+    "hash_covers": "files[].hunks[].diff text only, concatenated per file in order",
+    "added": "2026-10-19"
+  },
+  "python-command-injection": {
+    "analysis_input_hash": "sha256:743f2e0d5eefcf4dfb3b0ddf3cd4370b3c9b80a06a5014a3f5095fe2b3e0482b",
+    "hash_covers": "files[].hunks[].diff text only, concatenated per file in order",
+    "added": "2026-10-19"
+  },
+  "python-unsafe-deserialization": {
+    "analysis_input_hash": "sha256:105387eb340646f67e7d27812f804aa6aafe565df896f1a79adba14bc47f8903",
+    "hash_covers": "files[].hunks[].diff text only, concatenated per file in order",
+    "added": "2026-10-19"
+  },
+  "python-null-handling": {
+    "analysis_input_hash": "sha256:2401b6ed386300e397be273396d2518ab9129bf1a922e86d3f92f9301be7d7c2",
+    "hash_covers": "files[].hunks[].diff text only, concatenated per file in order",
+    "added": "2026-10-19"
+  },
+  "python-resource-leak": {
+    "analysis_input_hash": "sha256:e58d78228142611488dfc9ec5c74f46dbb112f5b569a5bb042ca1c5310b9f478",
+    "hash_covers": "files[].hunks[].diff text only, concatenated per file in order",
+    "added": "2026-10-19"
+  },
+  "java-hardcoded-secret": {
+    "analysis_input_hash": "sha256:c092d923c9f65cd0c395e8d257c12239bd424b632cd1ba1c31fc313dc2a2da8d",
+    "hash_covers": "files[].hunks[].diff text only, concatenated per file in order",
+    "added": "2026-10-19"
+  },
+  "java-command-injection": {
+    "analysis_input_hash": "sha256:2dd3aa86e62a2e34a5b868859909167e1d372c11b0d5dd8fc6c90bdad548b0d1",
+    "hash_covers": "files[].hunks[].diff text only, concatenated per file in order",
+    "added": "2026-10-19"
+  },
+  "java-unsafe-deserialization": {
+    "analysis_input_hash": "sha256:62c8480e63797da4359006449c6102e287f6741fd190ccf33723e3941f7539a3",
+    "hash_covers": "files[].hunks[].diff text only, concatenated per file in order",
+    "added": "2026-10-19"
+  },
+  "java-null-handling": {
+    "analysis_input_hash": "sha256:dbee594b6dabfba9d722b1cf92f8342ae96376bd3feb920c9dfebfd0319cce98",
+    "hash_covers": "files[].hunks[].diff text only, concatenated per file in order",
+    "added": "2026-10-19"
+  },
+  "java-resource-leak": {
+    "analysis_input_hash": "sha256:2df8cb38a0289c347b3dd1ed8dbe55e602dc65d7ac44fb4753be728d7623c8b8",
+    "hash_covers": "files[].hunks[].diff text only, concatenated per file in order",
+    "added": "2026-10-19"
+  },
+  "python-clean-rename-variable": {
+    "analysis_input_hash": "sha256:ca6e0a3db8c79167ab564af8a4c7f5183e504555a7b7b42332455efd647ba23a",
+    "hash_covers": "files[].hunks[].diff text only, concatenated per file in order",
+    "added": "2026-10-19"
+  },
+  "java-clean-add-getter": {
+    "analysis_input_hash": "sha256:7459a09daf586cb7afedd79ebb8580778217a5b18d963a708de263b5a9ed0780",
+    "hash_covers": "files[].hunks[].diff text only, concatenated per file in order",
+    "added": "2026-10-19"
+  }
+}

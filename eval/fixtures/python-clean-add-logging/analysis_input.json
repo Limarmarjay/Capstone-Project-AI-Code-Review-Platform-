@@ -1,0 +1,24 @@
+{
+  "submission_id": "python-clean-add-logging",
+  "source_type": "pull_request",
+  "repository": "eval-fixtures/synthetic",
+  "redaction_applied": true,
+  "files": [
+    {
+      "file_path": "src/billing/totals.py",
+      "language": "python",
+      "hunks": [
+        {
+          "hunk_id": "h1",
+          "start_line": 10,
+          "end_line": 12,
+          "diff": "@@ -10,2 +10,3 @@\n def calculate_total(items):\n+    logger.debug(\"Calculating total for %d items\", len(items))\n     return sum(item.price for item in items)",
+          "added_lines": [11],
+          "removed_lines": [],
+          "context_lines": [10, 12]
+        }
+      ],
+      "static_findings": []
+    }
+  ]
+}

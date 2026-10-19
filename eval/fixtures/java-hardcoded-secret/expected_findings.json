@@ -1,0 +1,18 @@
+{
+  "case_id": "java-hardcoded-secret",
+  "must_catch": [
+    {
+      "id": "mc1",
+      "category": "security",
+      "line": 14,
+      "relates_to_static_finding_id": "sf_001",
+      "reference_title": "Hardcoded JWT signing key",
+      "reference_explanation": "The token-signing key is a literal constant in source code. Anyone with repository access can forge valid tokens.",
+      "reference_suggested_fix": "Load the signing key from a secrets manager or environment variable, never a literal constant."
+    }
+  ],
+  "may_catch": [],
+  "must_not_flag": [
+    {"line": 16, "note": "Method signature for issueToken, unchanged context shown for orientation."}
+  ]
+}
