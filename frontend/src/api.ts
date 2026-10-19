@@ -73,9 +73,9 @@ export interface ReviewOutput {
 
 export interface Submission {
   _id: string
-  submission_type: 'patch' | 'diff'
+  submission_type: 'patch' | 'diff' | 'pull_request'
   filename: string
-  content: string
+  content: string | null
   status: 'parsed' | 'blocked' | 'error'
   review?: ReviewOutput
   scan_issues?: Record<string, string>
@@ -102,4 +102,54 @@ export async function createSubmission(
     }),
   })
   return parseResponse<Submission>(response)
+}
+
+function authHeaders(token: string) {
+  return { Authorization: `Bearer ${token}` }
+}
+
+export function connectGithub(token: string, personalAccessToken: string): Promise<{ connected: boolean }> {
+  return fetch(`${API_BASE_URL}/github/connect`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders(token) },
+    body: JSON.stringify({ token: personalAccessToken }),
+  }).then((res) => parseResponse<{ connected: boolean }>(res))
+}
+
+export function getGithubStatus(token: string): Promise<{ connected: boolean }> {
+  return fetch(`${API_BASE_URL}/github/status`, { headers: authHeaders(token) }).then((res) =>
+    parseResponse<{ connected: boolean }>(res),
+  )
+}
+
+export interface GithubRepo {
+  id: number
+  full_name: string
+}
+
+export function listGithubRepos(token: string): Promise<GithubRepo[]> {
+  return fetch(`${API_BASE_URL}/github/repos`, { headers: authHeaders(token) }).then((res) =>
+    parseResponse<GithubRepo[]>(res),
+  )
+}
+
+export interface GithubPullRequest {
+  id: number
+  number: number
+  title: string
+  html_url: string
+}
+
+export function listGithubPulls(token: string, fullRepoName: string): Promise<GithubPullRequest[]> {
+  return fetch(`${API_BASE_URL}/github/repos/${fullRepoName}/pulls`, {
+    headers: authHeaders(token),
+  }).then((res) => parseResponse<GithubPullRequest[]>(res))
+}
+
+export function submitPullRequest(token: string, pull: GithubPullRequest): Promise<Submission> {
+  return fetch(`${API_BASE_URL}/submission`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders(token) },
+    body: JSON.stringify({ submission_type: 'pull_request', pr_url: pull.html_url }),
+  }).then((res) => parseResponse<Submission>(res))
 }

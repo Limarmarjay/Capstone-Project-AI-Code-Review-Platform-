@@ -16,6 +16,8 @@ from pathlib import Path
 # module load time.
 os.environ.setdefault('MONGO_DB_NAME', 'Capstone_Proj_Database_test')
 os.environ.setdefault('JWT_SECRET', 'test-secret-do-not-use-in-prod')
+# A real Fernet key (app.crypto requires one), but test-only — never used outside this suite.
+os.environ.setdefault('ENCRYPTION_KEY', 'ZgmSwe8BrrHlZA4d4-rru5rSBnb6YEr06zcazJyiCOg=')
 
 _TESTS_DIR = Path(__file__).resolve().parent
 _BACKEND_DIR = _TESTS_DIR.parent
@@ -33,7 +35,7 @@ import pytest  # noqa: E402
 from app import create_app  # noqa: E402
 from app.db import db as mongo_db  # noqa: E402
 
-_MANAGED_COLLECTIONS = ('user', 'submission', 'review', 'findings')
+_MANAGED_COLLECTIONS = ('user', 'submission', 'review', 'findings', 'GitHub_connection')
 
 
 @pytest.fixture()
