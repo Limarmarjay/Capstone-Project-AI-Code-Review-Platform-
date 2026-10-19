@@ -1,0 +1,19 @@
+{
+  "case_id": "java-unsafe-deserialization",
+  "must_catch": [
+    {
+      "id": "mc1",
+      "category": "security",
+      "line": 14,
+      "relates_to_static_finding_id": "sf_001",
+      "reference_title": "Unsafe deserialization via ObjectInputStream",
+      "reference_explanation": "readObject() on an untrusted InputStream can be exploited to execute arbitrary code via crafted serialized gadget chains.",
+      "reference_suggested_fix": "Avoid native Java deserialization of untrusted data; use a safe format (e.g. JSON) or a vetted allow-list deserialization filter."
+    }
+  ],
+  "may_catch": [],
+  "must_not_flag": [
+    {"line": 10, "note": "Closing brace of the previous method, unchanged context shown for orientation."},
+    {"line": 16, "note": "Class closing brace, unchanged context shown for orientation."}
+  ]
+}

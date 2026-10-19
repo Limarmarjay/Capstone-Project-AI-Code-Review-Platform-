@@ -1,0 +1,28 @@
+{
+  "case_id": "python-unsafe-deserialization",
+  "must_catch": [
+    {
+      "id": "mc1",
+      "category": "security",
+      "line": 9,
+      "relates_to_static_finding_id": "sf_001",
+      "reference_title": "Unsafe deserialization via pickle.loads",
+      "reference_explanation": "pickle.loads executes arbitrary code embedded in the input during deserialization; raw_bytes here comes from outside the process and is untrusted.",
+      "reference_suggested_fix": "Use a safe serialization format (e.g. JSON) for untrusted input, or cryptographically sign/verify the payload before unpickling."
+    }
+  ],
+  "may_catch": [
+    {
+      "id": "oc1",
+      "category": "missing_tests",
+      "line": 8,
+      "relates_to_static_finding_id": null,
+      "reference_title": "No test coverage for load_session",
+      "reference_explanation": "There's no test exercising load_session with malformed or untrusted input.",
+      "reference_suggested_fix": "Add a test asserting malformed input is rejected safely."
+    }
+  ],
+  "must_not_flag": [
+    {"line": 10, "note": "def save_session(data): is unchanged context shown for orientation, not part of this diff."}
+  ]
+}

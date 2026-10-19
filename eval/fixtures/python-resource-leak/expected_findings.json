@@ -1,0 +1,18 @@
+{
+  "case_id": "python-resource-leak",
+  "must_catch": [
+    {
+      "id": "mc1",
+      "category": "bug",
+      "line": 7,
+      "relates_to_static_finding_id": "sf_001",
+      "reference_title": "File handle never closed",
+      "reference_explanation": "open() is never closed -- if write() raises, or on any other exit path, the file descriptor leaks. Under sustained load this can exhaust available descriptors.",
+      "reference_suggested_fix": "Use `with open(path, \"w\") as f:` so the file is closed automatically, including on exceptions."
+    }
+  ],
+  "may_catch": [],
+  "must_not_flag": [
+    {"line": 9, "note": "def read_header(path): is unchanged context shown for orientation, not part of this diff."}
+  ]
+}

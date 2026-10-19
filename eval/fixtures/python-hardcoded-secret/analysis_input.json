@@ -1,0 +1,34 @@
+{
+  "submission_id": "python-hardcoded-secret",
+  "source_type": "pull_request",
+  "repository": "eval-fixtures/synthetic",
+  "redaction_applied": true,
+  "files": [
+    {
+      "file_path": "src/integrations/payment_client.py",
+      "language": "python",
+      "hunks": [
+        {
+          "hunk_id": "h1",
+          "start_line": 18,
+          "end_line": 22,
+          "diff": "@@ -18,2 +18,5 @@\n \n+def get_payment_client():\n+    api_key = \"[REDACTED]\"\n+    return PaymentGateway(api_key=api_key)\n def process_order(order_id):",
+          "added_lines": [19, 20, 21],
+          "removed_lines": [],
+          "context_lines": [18, 22]
+        }
+      ],
+      "static_findings": [
+        {
+          "finding_id": "sf_001",
+          "tool": "bandit",
+          "rule_id": "B105",
+          "category": "security",
+          "message": "Possible hardcoded password: '<REDACTED_SECRET>'",
+          "file_path": "src/integrations/payment_client.py",
+          "line": 20
+        }
+      ]
+    }
+  ]
+}

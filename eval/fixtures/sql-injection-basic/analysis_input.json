@@ -12,7 +12,7 @@
           "hunk_id": "h1",
           "start_line": 42,
           "end_line": 46,
-          "diff": "@@ -42,2 +42,5 @@\n \n+def login(user, pwd):\n+    conn = db.connect(password=\"[REDACTED]\")\n+    return conn.query(f\"SELECT * FROM users WHERE name={user}\")\n def logout(user):",
+          "diff": "@@ -42,2 +42,5 @@\n \n+def login(user, pwd):\n+    conn = db.connect(credentials=\"[REDACTED]\")\n+    return conn.query(f\"SELECT * FROM users WHERE name={user}\")\n def logout(user):",
           "added_lines": [43, 44, 45],
           "removed_lines": [],
           "context_lines": [42, 46]

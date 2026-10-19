@@ -1,0 +1,18 @@
+{
+  "case_id": "python-command-injection",
+  "must_catch": [
+    {
+      "id": "mc1",
+      "category": "security",
+      "line": 16,
+      "relates_to_static_finding_id": "sf_001",
+      "reference_title": "Command injection via os.system",
+      "reference_explanation": "path is interpolated directly into a shell command string; a path containing shell metacharacters (e.g. `; rm -rf /`) would execute arbitrary commands.",
+      "reference_suggested_fix": "Use subprocess.run with an argument list and shell=False (e.g. subprocess.run([\"tar\", \"-czf\", \"backup.tar.gz\", path]))."
+    }
+  ],
+  "may_catch": [],
+  "must_not_flag": [
+    {"line": 17, "note": "def restore_latest(): is unchanged context shown for orientation, not part of this diff."}
+  ]
+}

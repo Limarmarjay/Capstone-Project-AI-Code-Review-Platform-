@@ -1,0 +1,34 @@
+{
+  "submission_id": "python-command-injection",
+  "source_type": "pull_request",
+  "repository": "eval-fixtures/synthetic",
+  "redaction_applied": true,
+  "files": [
+    {
+      "file_path": "src/ops/backup.py",
+      "language": "python",
+      "hunks": [
+        {
+          "hunk_id": "h1",
+          "start_line": 14,
+          "end_line": 17,
+          "diff": "@@ -14,2 +14,4 @@\n \n+def backup_directory(path):\n+    os.system(f\"tar -czf backup.tar.gz {path}\")\n def restore_latest():",
+          "added_lines": [15, 16],
+          "removed_lines": [],
+          "context_lines": [14, 17]
+        }
+      ],
+      "static_findings": [
+        {
+          "finding_id": "sf_001",
+          "tool": "bandit",
+          "rule_id": "B605",
+          "category": "security",
+          "message": "Starting a process with a shell, possible injection detected",
+          "file_path": "src/ops/backup.py",
+          "line": 16
+        }
+      ]
+    }
+  ]
+}
