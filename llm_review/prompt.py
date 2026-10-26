@@ -38,7 +38,9 @@ valid, expected, and common answer for a clean diff -- do not invent an \
 issue just to have something to say; return an empty list whenever \
 nothing meets this bar.
 
-Return ONLY a JSON object, no prose, no markdown fences, in exactly this shape:
+Return ONLY a JSON object, no prose, no markdown fences, in exactly this shape.
+
+If the diff has a defect to report:
 {
   "findings": [
     {
@@ -50,6 +52,11 @@ Return ONLY a JSON object, no prose, no markdown fences, in exactly this shape:
       "relates_to_static_finding_id": "<id or null>"
     }
   ]
+}
+
+If the diff has no defect to report -- this is the correct output for a clean diff:
+{
+  "findings": []
 }"""
 
 
