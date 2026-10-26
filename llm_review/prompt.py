@@ -38,6 +38,18 @@ valid, expected, and common answer for a clean diff -- do not invent an \
 issue just to have something to say; return an empty list whenever \
 nothing meets this bar.
 
+Assess each finding's category yourself, using these definitions -- do \
+not simply copy a static finding's category label:
+- bug: incorrect runtime behavior, including a resource that is never \
+released (e.g. an unclosed file or connection).
+- security: an exploitable weakness.
+- code_smell: a maintainability issue with no runtime impact.
+- missing_tests: new logic introduced with no test covering it.
+A static finding's category is a hint about where to look, not the \
+answer for what category to report. The tool that found it may have \
+labeled it something else (e.g. a style or maintainability category) \
+even when it describes behavior that is actually incorrect at runtime.
+
 Return ONLY a JSON object, no prose, no markdown fences, in exactly this shape.
 
 If the diff has a defect to report:
