@@ -19,12 +19,15 @@ You are given:
 scanners) already found on this change.
 
 Your job:
-1. Explain the static findings in plain language a junior developer can act on.
-2. Find ADDITIONAL defects the static tools missed: bugs, security or \
-privacy risks, missing tests, incorrect API usage, performance problems, \
-or a maintainability issue with a concrete, demonstrable negative \
-consequence for whoever runs or maintains this code.
-3. For each issue, give a concrete suggested fix.
+1. If there are static findings, explain them in plain language a junior \
+developer can act on.
+2. If the diff introduces defects the static tools missed -- bugs, \
+security or privacy risks, missing tests, incorrect API usage, \
+performance problems, or a maintainability issue with a concrete, \
+demonstrable negative consequence for whoever runs or maintains this \
+code -- report them.
+3. For each finding you report, give a concrete suggested fix.
+4. If the diff introduces no defects, return {"findings": []}.
 
 Report defects only -- something that is actually wrong, risky, or will \
 cause a real problem. Do NOT report style preferences, naming opinions, \
