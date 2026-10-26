@@ -60,6 +60,16 @@ class LLMTimeout(LLMError):
     error, or a 5xx from the API."""
 
 
+class LLMConnectionError(LLMTimeout):
+    """The endpoint could not be reached at all (e.g. connection refused --
+    the server process isn't running), as opposed to being reached but
+    responding slowly or with a 5xx. A subclass of LLMTimeout so every
+    existing `except LLMTimeout` / `except LLMError` call site still
+    catches it unchanged; a caller that needs to tell "unreachable" apart
+    from "reached but slow" (e.g. to pick an HTTP status code) can catch
+    this specifically instead of inspecting the exception message."""
+
+
 class LLMPermanentError(LLMError):
     """Non-retryable failure: bad credentials, permission, a malformed
     request, a missing API key, or the SDK not being installed. Retrying
@@ -237,7 +247,13 @@ class OllamaLLMClient:
         self.temperature = temperature
         self.seed = seed
 
-    def complete(self, system: str, user: str) -> str:
+    def complete(
+        self,
+        system: str,
+        user: str,
+        *,
+        json_schema: dict | None = FINDINGS_RESPONSE_SCHEMA,
+    ) -> str:
         import urllib.error
         import urllib.request
 
@@ -248,8 +264,13 @@ class OllamaLLMClient:
                 {"role": "user", "content": user},
             ],
             "stream": False,
-            "format": FINDINGS_RESPONSE_SCHEMA,
         }
+        # Defaults to the findings schema so every existing caller (the
+        # review pipeline, eval runner, check_llm.py) is unaffected; pass
+        # json_schema=None for free-text output with no shape constraint
+        # (e.g. a plain-prompt API that isn't asking for a review).
+        if json_schema is not None:
+            payload_dict["format"] = json_schema
         options = {}
         if self.temperature is not None:
             options["temperature"] = self.temperature
@@ -288,7 +309,7 @@ class OllamaLLMClient:
             # as transient for consistency with AnthropicLLMClient's
             # APIConnectionError handling, even though a fully-down local
             # server won't come back up between this attempt and the next.
-            raise LLMTimeout(f"Could not reach Ollama at {self.host}: {e.reason}") from e
+            raise LLMConnectionError(f"Could not reach Ollama at {self.host}: {e.reason}") from e
 
         try:
             parsed = json.loads(body)
