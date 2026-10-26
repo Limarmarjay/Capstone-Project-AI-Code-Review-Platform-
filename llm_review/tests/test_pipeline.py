@@ -648,6 +648,24 @@ def test_ollama_client_request_payload_shape_unchanged_otherwise():
     assert sent["model"] == "qwen2.5-coder:7b"
 
 
+def test_ollama_client_omits_options_when_temperature_and_seed_not_given():
+    body = json.dumps({"message": {"role": "assistant", "content": '{"findings": []}'}}).encode()
+    with _fake_urlopen(response_body=body) as captured:
+        OllamaLLMClient().complete("sys", "user")
+
+    sent = json.loads(captured[0].data)
+    assert "options" not in sent
+
+
+def test_ollama_client_sends_temperature_and_seed_when_given():
+    body = json.dumps({"message": {"role": "assistant", "content": '{"findings": []}'}}).encode()
+    with _fake_urlopen(response_body=body) as captured:
+        OllamaLLMClient(temperature=0.0, seed=42).complete("sys", "user")
+
+    sent = json.loads(captured[0].data)
+    assert sent["options"] == {"temperature": 0.0, "seed": 42}
+
+
 # ---- run_review.py CLI: safe OLLAMA_TIMEOUT_SECONDS parsing --------------
 
 def test_default_ollama_timeout_falls_back_on_blank_or_invalid_value():

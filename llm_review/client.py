@@ -226,16 +226,22 @@ class OllamaLLMClient:
         model: str = "qwen2.5-coder:7b",
         host: str = "http://localhost:11434",
         timeout: float = 300.0,
+        temperature: float | None = None,
+        seed: int | None = None,
     ) -> None:
         self.model = model
         self.host = host.rstrip("/")
         self.timeout = timeout
+        # None means "don't send it, let Ollama use its own default" --
+        # existing callers that don't pass these get an unchanged payload.
+        self.temperature = temperature
+        self.seed = seed
 
     def complete(self, system: str, user: str) -> str:
         import urllib.error
         import urllib.request
 
-        payload = json.dumps({
+        payload_dict = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": system},
@@ -243,7 +249,16 @@ class OllamaLLMClient:
             ],
             "stream": False,
             "format": FINDINGS_RESPONSE_SCHEMA,
-        }).encode("utf-8")
+        }
+        options = {}
+        if self.temperature is not None:
+            options["temperature"] = self.temperature
+        if self.seed is not None:
+            options["seed"] = self.seed
+        if options:
+            payload_dict["options"] = options
+
+        payload = json.dumps(payload_dict).encode("utf-8")
         req = urllib.request.Request(
             f"{self.host}/api/chat",
             data=payload,

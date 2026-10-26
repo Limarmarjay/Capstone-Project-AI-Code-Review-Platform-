@@ -10,3 +10,7 @@ __pycache__/
 .env
 .env.*
 !.env.example
+
+# eval/run_eval.py's per-run output; eval/baselines/ holds the committed
+# reference runs instead.
+eval/results/

@@ -1,0 +1,373 @@
+{
+  "metadata": {
+    "timestamp": "2026-10-22T16:38:05.784020+00:00",
+    "model": "qwen2.5-coder:7b",
+    "host": "http://localhost:11434",
+    "timeout_seconds": 300.0,
+    "temperature": 0.0,
+    "seed": 42,
+    "git_commit": "aef57f15940da2899250dff424a9815cb5bf065f",
+    "system_prompt_sha256": "387886eba54cc2b842a3775ad20e9d6e4453db33402b64a0dafe4bfd5094168f",
+    "fixture_count": 15
+  },
+  "fixtures": [
+    {
+      "case_id": "java-clean-add-getter",
+      "llm_status": "success",
+      "latency_seconds": 7.019,
+      "overall_score": 97,
+      "must_catch_total": 0,
+      "may_catch_total": 0,
+      "matched_must_catch": [],
+      "missed_must_catch": [],
+      "matched_may_catch": [],
+      "missed_may_catch": [],
+      "must_not_flag_hits": [
+        {
+          "line": 11,
+          "category": "code_smell",
+          "title": "Missing Setter Method"
+        }
+      ],
+      "unexpected": []
+    },
+    {
+      "case_id": "java-command-injection",
+      "llm_status": "success",
+      "latency_seconds": 11.84,
+      "overall_score": 60,
+      "must_catch_total": 1,
+      "may_catch_total": 0,
+      "matched_must_catch": [
+        {
+          "id": "mc1",
+          "line": 21,
+          "category": "security",
+          "link_correct": true
+        }
+      ],
+      "missed_must_catch": [],
+      "matched_may_catch": [],
+      "missed_may_catch": [],
+      "must_not_flag_hits": [],
+      "unexpected": []
+    },
+    {
+      "case_id": "java-hardcoded-secret",
+      "llm_status": "success",
+      "latency_seconds": 7.581,
+      "overall_score": 60,
+      "must_catch_total": 1,
+      "may_catch_total": 0,
+      "matched_must_catch": [],
+      "missed_must_catch": [
+        "mc1"
+      ],
+      "matched_may_catch": [],
+      "missed_may_catch": [],
+      "must_not_flag_hits": [],
+      "unexpected": [
+        {
+          "line": 12,
+          "category": "security",
+          "title": "Hardcoded cryptographic signing key"
+        }
+      ]
+    },
+    {
+      "case_id": "java-null-handling",
+      "llm_status": "success",
+      "latency_seconds": 8.935,
+      "overall_score": 60,
+      "must_catch_total": 1,
+      "may_catch_total": 1,
+      "matched_must_catch": [
+        {
+          "id": "mc1",
+          "line": 26,
+          "category": "bug",
+          "link_correct": true
+        }
+      ],
+      "missed_must_catch": [],
+      "matched_may_catch": [],
+      "missed_may_catch": [
+        "oc1"
+      ],
+      "must_not_flag_hits": [],
+      "unexpected": []
+    },
+    {
+      "case_id": "java-resource-leak",
+      "llm_status": "success",
+      "latency_seconds": 5.452,
+      "overall_score": 92,
+      "must_catch_total": 1,
+      "may_catch_total": 0,
+      "matched_must_catch": [],
+      "missed_must_catch": [
+        "mc1"
+      ],
+      "matched_may_catch": [],
+      "missed_may_catch": [],
+      "must_not_flag_hits": [],
+      "unexpected": [
+        {
+          "line": 17,
+          "category": "code_smell",
+          "title": "FileWriter not closed"
+        }
+      ]
+    },
+    {
+      "case_id": "java-sql-injection",
+      "llm_status": "success",
+      "latency_seconds": 7.592,
+      "overall_score": 60,
+      "must_catch_total": 1,
+      "may_catch_total": 1,
+      "matched_must_catch": [
+        {
+          "id": "mc1",
+          "line": 32,
+          "category": "security",
+          "link_correct": true
+        }
+      ],
+      "missed_must_catch": [],
+      "matched_may_catch": [],
+      "missed_may_catch": [
+        "oc1"
+      ],
+      "must_not_flag_hits": [],
+      "unexpected": []
+    },
+    {
+      "case_id": "java-unsafe-deserialization",
+      "llm_status": "success",
+      "latency_seconds": 6.357,
+      "overall_score": 60,
+      "must_catch_total": 1,
+      "may_catch_total": 0,
+      "matched_must_catch": [
+        {
+          "id": "mc1",
+          "line": 14,
+          "category": "security",
+          "link_correct": true
+        }
+      ],
+      "missed_must_catch": [],
+      "matched_may_catch": [],
+      "missed_may_catch": [],
+      "must_not_flag_hits": [],
+      "unexpected": []
+    },
+    {
+      "case_id": "python-clean-add-logging",
+      "llm_status": "success",
+      "latency_seconds": 6.455,
+      "overall_score": 97,
+      "must_catch_total": 0,
+      "may_catch_total": 0,
+      "matched_must_catch": [],
+      "missed_must_catch": [],
+      "matched_may_catch": [],
+      "missed_may_catch": [],
+      "must_not_flag_hits": [
+        {
+          "line": 11,
+          "category": "code_smell",
+          "title": "Magic number"
+        }
+      ],
+      "unexpected": []
+    },
+    {
+      "case_id": "python-clean-rename-variable",
+      "llm_status": "success",
+      "latency_seconds": 5.984,
+      "overall_score": 97,
+      "must_catch_total": 0,
+      "may_catch_total": 0,
+      "matched_must_catch": [],
+      "missed_must_catch": [],
+      "matched_may_catch": [],
+      "missed_may_catch": [],
+      "must_not_flag_hits": [
+        {
+          "line": 3,
+          "category": "code_smell",
+          "title": "Variable name inconsistency"
+        }
+      ],
+      "unexpected": []
+    },
+    {
+      "case_id": "python-command-injection",
+      "llm_status": "success",
+      "latency_seconds": 8.415,
+      "overall_score": 60,
+      "must_catch_total": 1,
+      "may_catch_total": 0,
+      "matched_must_catch": [
+        {
+          "id": "mc1",
+          "line": 15,
+          "category": "security",
+          "link_correct": true
+        }
+      ],
+      "missed_must_catch": [],
+      "matched_may_catch": [],
+      "missed_may_catch": [],
+      "must_not_flag_hits": [],
+      "unexpected": []
+    },
+    {
+      "case_id": "python-hardcoded-secret",
+      "llm_status": "success",
+      "latency_seconds": 7.328,
+      "overall_score": 60,
+      "must_catch_total": 1,
+      "may_catch_total": 1,
+      "matched_must_catch": [
+        {
+          "id": "mc1",
+          "line": 20,
+          "category": "security",
+          "link_correct": true
+        }
+      ],
+      "missed_must_catch": [],
+      "matched_may_catch": [],
+      "missed_may_catch": [
+        "oc1"
+      ],
+      "must_not_flag_hits": [],
+      "unexpected": []
+    },
+    {
+      "case_id": "python-null-handling",
+      "llm_status": "success",
+      "latency_seconds": 7.476,
+      "overall_score": 60,
+      "must_catch_total": 1,
+      "may_catch_total": 1,
+      "matched_must_catch": [
+        {
+          "id": "mc1",
+          "line": 23,
+          "category": "bug",
+          "link_correct": true
+        }
+      ],
+      "missed_must_catch": [],
+      "matched_may_catch": [],
+      "missed_may_catch": [
+        "oc1"
+      ],
+      "must_not_flag_hits": [],
+      "unexpected": []
+    },
+    {
+      "case_id": "python-resource-leak",
+      "llm_status": "success",
+      "latency_seconds": 7.767,
+      "overall_score": 92,
+      "must_catch_total": 1,
+      "may_catch_total": 0,
+      "matched_must_catch": [],
+      "missed_must_catch": [
+        "mc1"
+      ],
+      "matched_may_catch": [],
+      "missed_may_catch": [],
+      "must_not_flag_hits": [],
+      "unexpected": [
+        {
+          "line": 7,
+          "category": "code_smell",
+          "title": "Use 'with' for resource-allocating operations"
+        }
+      ]
+    },
+    {
+      "case_id": "python-unsafe-deserialization",
+      "llm_status": "success",
+      "latency_seconds": 6.81,
+      "overall_score": 60,
+      "must_catch_total": 1,
+      "may_catch_total": 1,
+      "matched_must_catch": [
+        {
+          "id": "mc1",
+          "line": 10,
+          "category": "security",
+          "link_correct": true
+        }
+      ],
+      "missed_must_catch": [],
+      "matched_may_catch": [],
+      "missed_may_catch": [
+        "oc1"
+      ],
+      "must_not_flag_hits": [],
+      "unexpected": []
+    },
+    {
+      "case_id": "sql-injection-basic",
+      "llm_status": "success",
+      "latency_seconds": 12.611,
+      "overall_score": 49,
+      "must_catch_total": 1,
+      "may_catch_total": 1,
+      "matched_must_catch": [
+        {
+          "id": "mc1",
+          "line": 44,
+          "category": "security",
+          "link_correct": true
+        }
+      ],
+      "missed_must_catch": [],
+      "matched_may_catch": [],
+      "missed_may_catch": [
+        "oc1"
+      ],
+      "must_not_flag_hits": [],
+      "unexpected": [
+        {
+          "line": 44,
+          "category": "missing_tests",
+          "title": "Missing Test for Login Function"
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "precision": 0.5625,
+    "recall": 0.75,
+    "false_positives_on_clean_cases": 3,
+    "latency_seconds": {
+      "mean": 7.841466666666666,
+      "median": 7.476,
+      "mean_excluding_failed": 7.841466666666666
+    },
+    "llm_status_counts": {
+      "success": 15
+    },
+    "invalid_response_count": 0,
+    "timeout_count": 0,
+    "totals": {
+      "must_catch": 12,
+      "matched_must_catch": 9,
+      "may_catch": 6,
+      "matched_may_catch": 0,
+      "must_not_flag_hits": 3,
+      "unexpected": 4,
+      "static_link_correct": 9,
+      "static_link_incorrect": 0
+    }
+  }
+}
