@@ -297,6 +297,18 @@ function GithubPanel({ token, onResult }: { token: string; onResult: (submission
       )}
 
       {error && <p className="upload-error">{error}</p>}
+
+      <button
+        type="button"
+        className="link-button"
+        onClick={() => {
+          setConnected(false)
+          setPatToken('')
+          setError(null)
+        }}
+      >
+        Use a different token
+      </button>
     </div>
   )
 }

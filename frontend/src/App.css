@@ -266,6 +266,21 @@
   font-size: 0.9rem;
 }
 
+.link-button {
+  align-self: flex-start;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.link-button:hover {
+  opacity: 0.8;
+}
+
 .analysis-results {
   margin-top: 1.5rem;
   padding: 1.75rem;
