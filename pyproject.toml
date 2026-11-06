@@ -1,5 +1,6 @@
 [tool.pytest.ini_options]
-testpaths = ["llm_review/tests", "repo_diff_pipeline/tests"]
+pythonpath = ["."]
+testpaths = ["llm_review/tests", "repo_diff_pipeline/tests", "tests"]
 
 # 4 files under llm_review/tests/ fail to collect: they still import
 # `backend.services.*`, a module that was renamed to
