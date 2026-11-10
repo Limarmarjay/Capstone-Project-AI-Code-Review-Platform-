@@ -17,6 +17,7 @@ Usage:
     python eval/run_eval.py
     python eval/run_eval.py --fixture sql-injection-basic --fixture python-command-injection
     python eval/run_eval.py --save-baseline qwen2.5-coder-7b
+    python eval/run_eval.py --seeds 42,1,2,3,4 --save-baseline qwen2.5-coder-7b-stability
 """
 import argparse
 import hashlib
@@ -259,6 +260,84 @@ def aggregate(results: list[dict]) -> dict:
     }
 
 
+def fixture_passed(result: dict) -> bool:
+    """A fixture "passes" a given run iff it's fully correct: every
+    must_catch matched, and nothing unexpected or wrongly flagged. Used
+    for per-seed stability, not for the main precision/recall metrics
+    (which score at the finding level, not the fixture level)."""
+    return (
+        len(result["missed_must_catch"]) == 0
+        and len(result["unexpected"]) == 0
+        and len(result["must_not_flag_hits"]) == 0
+    )
+
+
+def aggregate_across_seeds(per_seed: list[dict]) -> dict:
+    """Stability metrics across N single-seed runs: mean/min/max
+    precision and recall, and a per-fixture pass rate (see
+    fixture_passed) that surfaces which fixtures are flaky at
+    temperature=0 rather than reliably right or reliably wrong."""
+
+    def stats(values: list[float]) -> dict:
+        values = [v for v in values if v is not None]
+        if not values:
+            return {"mean": None, "min": None, "max": None}
+        return {"mean": statistics.mean(values), "min": min(values), "max": max(values)}
+
+    precision_stats = stats([r["summary"]["precision"] for r in per_seed])
+    recall_stats = stats([r["summary"]["recall"] for r in per_seed])
+
+    # Collected from every seed, not just per_seed[0] -- a fixture absent
+    # from some seeds (e.g. a --fixture subset that varies seed to seed)
+    # is counted out of the seeds it actually ran in, not out of every
+    # seed in per_seed. Using the first seed's fixture list as the full
+    # case_id set would KeyError on any case_id introduced by a later
+    # seed.
+    ran_counts: dict[str, int] = {}
+    pass_counts: dict[str, int] = {}
+    for r in per_seed:
+        for f in r["fixtures"]:
+            cid = f["case_id"]
+            ran_counts[cid] = ran_counts.get(cid, 0) + 1
+            if fixture_passed(f):
+                pass_counts[cid] = pass_counts.get(cid, 0) + 1
+
+    per_fixture_pass_rate = {
+        cid: {
+            "passes": pass_counts.get(cid, 0),
+            "total": ran_counts[cid],
+            "rate": pass_counts.get(cid, 0) / ran_counts[cid] if ran_counts[cid] else None,
+        }
+        for cid in sorted(ran_counts)
+    }
+    unstable_fixtures = [
+        cid for cid, d in per_fixture_pass_rate.items() if 0 < d["passes"] < d["total"]
+    ]
+
+    return {
+        "precision": precision_stats,
+        "recall": recall_stats,
+        "per_fixture_pass_rate": per_fixture_pass_rate,
+        "unstable_fixtures": unstable_fixtures,
+    }
+
+
+def _parse_seeds(raw: str) -> list[int]:
+    try:
+        return [int(s.strip()) for s in raw.split(",") if s.strip()]
+    except ValueError as e:
+        raise SystemExit(f"--seeds must be a comma-separated list of integers, got {raw!r}") from e
+
+
+def print_pass_rate_table(per_fixture_pass_rate: dict, unstable_fixtures: list[str]) -> None:
+    print("\n=== Per-fixture pass rate ===")
+    width = max(len(cid) for cid in per_fixture_pass_rate) if per_fixture_pass_rate else 0
+    for cid, d in sorted(per_fixture_pass_rate.items()):
+        flag = "  <- UNSTABLE" if cid in unstable_fixtures else ""
+        rate_pct = f"{d['rate'] * 100:.0f}%" if d["rate"] is not None else "n/a"
+        print(f"  {cid:<{width}}  {d['passes']}/{d['total']}  ({rate_pct}){flag}")
+
+
 def git_commit() -> str:
     try:
         return subprocess.run(
@@ -268,6 +347,88 @@ def git_commit() -> str:
         return "unknown"
 
 
+def run_multi_seed(args, fixtures: list[tuple[str, dict, dict]], seeds: list[int]) -> int:
+    print(f"Running {len(fixtures)} fixture(s) across {len(seeds)} seed(s): {seeds}\n", flush=True)
+
+    per_seed: list[dict] = []
+    for seed in seeds:
+        print(f"--- seed={seed} ---", flush=True)
+
+        def client_factory(seed=seed):
+            return _ConnectionAwareOllamaClient(
+                OllamaLLMClient(
+                    model=args.model, host=args.host, timeout=args.timeout,
+                    temperature=args.temperature, seed=seed,
+                )
+            )
+
+        results = []
+        for case_id, analysis_input, expected in fixtures:
+            result, connection_failed = run_one_fixture(case_id, analysis_input, expected, client_factory)
+            if connection_failed:
+                print(f"[ABORT] seed={seed} {case_id}: Ollama became unreachable mid-run -- {result['connection_failure']}")
+                print("Aborting without saving any results (connection failure, not a model timeout).")
+                return 1
+            status_bits = (
+                f"must_catch {len(result['matched_must_catch'])}/{result['must_catch_total']}, "
+                f"may_catch {len(result['matched_may_catch'])}/{result['may_catch_total']}, "
+                f"must_not_flag_hits {len(result['must_not_flag_hits'])}, "
+                f"unexpected {len(result['unexpected'])}"
+            )
+            print(f"  [{result['llm_status']:>16}] {case_id} ({result['latency_seconds']}s) -- {status_bits}", flush=True)
+            results.append(result)
+
+        summary = aggregate(results)
+        per_seed.append({"seed": seed, "fixtures": results, "summary": summary})
+        print()
+
+    stability = aggregate_across_seeds(per_seed)
+
+    report = {
+        "metadata": {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "model": args.model,
+            "host": args.host,
+            "timeout_seconds": args.timeout,
+            "temperature": args.temperature,
+            "seeds": seeds,
+            "git_commit": git_commit(),
+            "system_prompt_sha256": hashlib.sha256(SYSTEM_PROMPT.encode("utf-8")).hexdigest(),
+            "fixture_count": len(fixtures),
+        },
+        "per_seed": per_seed,
+        "stability": stability,
+    }
+
+    os.makedirs(RESULTS_DIR, exist_ok=True)
+    out_name = report["metadata"]["timestamp"].replace(":", "").replace("+00:00", "Z") + ".json"
+    out_path = os.path.join(RESULTS_DIR, out_name)
+    with open(out_path, "w") as f:
+        json.dump(report, f, indent=2)
+    print(f"Wrote {out_path}")
+
+    if args.save_baseline:
+        os.makedirs(BASELINES_DIR, exist_ok=True)
+        baseline_path = os.path.join(BASELINES_DIR, f"{args.save_baseline}.json")
+        with open(baseline_path, "w") as f:
+            json.dump(report, f, indent=2)
+        print(f"Wrote {baseline_path}")
+
+    print_pass_rate_table(stability["per_fixture_pass_rate"], stability["unstable_fixtures"])
+
+    print("\n=== Precision / recall across seeds ===")
+    p_stats, r_stats = stability["precision"], stability["recall"]
+    print(f"  precision: mean={p_stats['mean']} min={p_stats['min']} max={p_stats['max']}")
+    print(f"  recall:    mean={r_stats['mean']} min={r_stats['min']} max={r_stats['max']}")
+
+    if stability["unstable_fixtures"]:
+        print(f"\nUnstable fixtures (pass rate strictly between 0% and 100%): {stability['unstable_fixtures']}")
+    else:
+        print("\nNo unstable fixtures -- every fixture's outcome was consistent across all seeds.")
+
+    return 0
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description="Run the eval fixtures against a local Ollama model.")
     p.add_argument("--model", default="qwen2.5-coder:7b")
@@ -275,6 +436,12 @@ def main() -> int:
     p.add_argument("--timeout", type=float, default=_default_ollama_timeout())
     p.add_argument("--temperature", type=float, default=0.0)
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument(
+        "--seeds", default=None,
+        help="Comma-separated seeds (e.g. 42,1,2,3,4): run every fixture once per "
+             "seed and report mean/min/max precision+recall plus a per-fixture pass "
+             "rate across seeds, instead of a single run. Overrides --seed.",
+    )
     p.add_argument("--fixture", action="append", default=None, help="Run only this fixture (repeatable). Default: all.")
     p.add_argument("--save-baseline", default=None, help="Also write eval/baselines/<name>.json")
     p.add_argument("--skip-setup-check", action="store_true", help="Debugging escape hatch; not for normal use")
@@ -286,6 +453,11 @@ def main() -> int:
             return 1
 
     fixtures = load_fixtures(args.fixture)
+
+    if args.seeds:
+        seeds = _parse_seeds(args.seeds)
+        return run_multi_seed(args, fixtures, seeds)
+
     print(f"Running {len(fixtures)} fixture(s) against model={args.model!r} host={args.host!r}")
     print(f"temperature={args.temperature} seed={args.seed}\n")
 
