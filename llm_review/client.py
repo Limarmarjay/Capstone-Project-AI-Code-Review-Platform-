@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import json
 import os
+import sys
+from functools import lru_cache
 from typing import Protocol
 
 from .types import Category
@@ -334,6 +336,72 @@ class OllamaLLMClient:
         if not text.strip():
             raise LLMError("empty response from Ollama")
         return text
+
+
+@lru_cache(maxsize=1)
+def get_llm_client() -> LLMClient:
+    """App-level factory: builds the LLMClient to use based on
+    $LLM_CLIENT ('ollama' | 'anthropic' | 'mock', case-insensitive),
+    defaulting to 'ollama' when unset. Fails fast -- raises ValueError,
+    never falls back silently -- on any other value, so a typo in
+    deployment config surfaces immediately instead of silently running
+    a different client than intended.
+
+    Ollama's model/host use OllamaLLMClient's own constructor defaults:
+    no existing env var names them specifically (LLM_API_MODEL/
+    LLM_API_HOST are scoped to the standalone llm_review/api.py app, a
+    different path). Its timeout reads $OLLAMA_TIMEOUT_SECONDS, the
+    same variable run_review.py and eval/run_eval.py already read --
+    parsed independently here (not imported from run_review.py, which
+    already imports FROM this module and would create a circular
+    import) with the same "warn and use the default" fallback. An
+    invalid OLLAMA_TIMEOUT_SECONDS only warns; it never raises the way
+    an invalid LLM_CLIENT does, since it degrades to a sensible default
+    rather than picking the wrong client entirely.
+
+    Cached after the first call via lru_cache: every call after the
+    first returns the SAME instance, so a caller (e.g. a Flask route)
+    can call this inline on every request without rebuilding a client
+    each time. lru_cache's own internal lock makes the first,
+    cache-populating call safe under concurrent callers. Every instance
+    this factory can return is itself safe to share across concurrent
+    requests too: MockLLMClient/AnthropicLLMClient/OllamaLLMClient all
+    hold only construction-time config (model/host/timeout/etc.), never
+    mutate it inside complete(), and AnthropicLLMClient/OllamaLLMClient
+    build a fresh per-call request locally rather than reusing any
+    shared state. (The one exception, MockLLMClient.call_count, is a
+    debug counter with no effect on review correctness even if a count
+    is occasionally lost to a race under concurrent mock-mode use.)
+
+    Tests: call get_llm_client.cache_clear() before changing $LLM_CLIENT
+    within the same process -- otherwise this keeps returning the first
+    call's cached result regardless of the env var's new value.
+    """
+    choice = os.environ.get("LLM_CLIENT", "ollama").strip().lower()
+
+    if choice == "ollama":
+        kwargs = {}
+        raw_timeout = os.environ.get("OLLAMA_TIMEOUT_SECONDS", "").strip()
+        if raw_timeout:
+            try:
+                kwargs["timeout"] = float(raw_timeout)
+            except ValueError:
+                print(
+                    f"Warning: OLLAMA_TIMEOUT_SECONDS={raw_timeout!r} is not "
+                    f"a valid number; using OllamaLLMClient's own default.",
+                    file=sys.stderr,
+                )
+        return OllamaLLMClient(**kwargs)
+
+    if choice == "anthropic":
+        return AnthropicLLMClient()
+
+    if choice == "mock":
+        return MockLLMClient()
+
+    raise ValueError(
+        f"Unknown LLM_CLIENT={choice!r}; expected one of: ollama, anthropic, mock."
+    )
 
 
 def _static_id_for(text: str, keyword: str) -> str | None:

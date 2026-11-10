@@ -25,6 +25,7 @@ from llm_review.client import (
     LLMTimeout,
     MockLLMClient,
     OllamaLLMClient,
+    get_llm_client,
 )
 from llm_review.severity import assign_severity, score
 from llm_review.types import (
@@ -693,6 +694,114 @@ def test_default_ollama_timeout_falls_back_on_blank_or_invalid_value():
     finally:
         if prev is not None:
             os.environ["OLLAMA_TIMEOUT_SECONDS"] = prev
+        else:
+            os.environ.pop("OLLAMA_TIMEOUT_SECONDS", None)
+
+
+# ---- get_llm_client: config-based client selection -----------------------
+
+def _reset_llm_client_env_and_cache():
+    """Returns the previous $LLM_CLIENT value (or None) so a test can
+    restore it; always clears the lru_cache so the next get_llm_client()
+    call re-reads the env var instead of returning a stale instance."""
+    prev = os.environ.get("LLM_CLIENT")
+    get_llm_client.cache_clear()
+    return prev
+
+
+def _restore_llm_client_env(prev):
+    if prev is not None:
+        os.environ["LLM_CLIENT"] = prev
+    else:
+        os.environ.pop("LLM_CLIENT", None)
+    get_llm_client.cache_clear()
+
+
+def test_get_llm_client_defaults_to_ollama_when_unset():
+    prev = _reset_llm_client_env_and_cache()
+    try:
+        os.environ.pop("LLM_CLIENT", None)
+        get_llm_client.cache_clear()
+        assert isinstance(get_llm_client(), OllamaLLMClient)
+    finally:
+        _restore_llm_client_env(prev)
+
+
+def test_get_llm_client_maps_each_value_to_the_right_class():
+    prev = _reset_llm_client_env_and_cache()
+    try:
+        for value, expected_cls in [
+            ("ollama", OllamaLLMClient),
+            ("anthropic", AnthropicLLMClient),
+            ("mock", MockLLMClient),
+            ("OLLAMA", OllamaLLMClient),   # case-insensitive
+            ("Mock", MockLLMClient),
+        ]:
+            os.environ["LLM_CLIENT"] = value
+            get_llm_client.cache_clear()
+            assert isinstance(get_llm_client(), expected_cls), value
+    finally:
+        _restore_llm_client_env(prev)
+
+
+def test_get_llm_client_raises_on_unknown_value():
+    prev = _reset_llm_client_env_and_cache()
+    try:
+        os.environ["LLM_CLIENT"] = "openai"
+        get_llm_client.cache_clear()
+        try:
+            get_llm_client()
+        except ValueError as e:
+            assert "openai" in str(e)
+            assert "ollama" in str(e)  # lists the valid choices
+        else:
+            raise AssertionError("expected ValueError for an unknown LLM_CLIENT")
+    finally:
+        _restore_llm_client_env(prev)
+
+
+def test_get_llm_client_caches_the_same_instance():
+    prev = _reset_llm_client_env_and_cache()
+    try:
+        os.environ["LLM_CLIENT"] = "mock"
+        get_llm_client.cache_clear()
+        assert get_llm_client() is get_llm_client()
+    finally:
+        _restore_llm_client_env(prev)
+
+
+def test_get_llm_client_respects_ollama_timeout_env_var():
+    prev = _reset_llm_client_env_and_cache()
+    prev_timeout = os.environ.get("OLLAMA_TIMEOUT_SECONDS")
+    try:
+        os.environ["LLM_CLIENT"] = "ollama"
+        os.environ["OLLAMA_TIMEOUT_SECONDS"] = "77"
+        get_llm_client.cache_clear()
+        assert get_llm_client().timeout == 77.0
+    finally:
+        _restore_llm_client_env(prev)
+        if prev_timeout is not None:
+            os.environ["OLLAMA_TIMEOUT_SECONDS"] = prev_timeout
+        else:
+            os.environ.pop("OLLAMA_TIMEOUT_SECONDS", None)
+
+
+def test_get_llm_client_warns_and_falls_back_on_invalid_ollama_timeout():
+    prev = _reset_llm_client_env_and_cache()
+    prev_timeout = os.environ.get("OLLAMA_TIMEOUT_SECONDS")
+    try:
+        os.environ["LLM_CLIENT"] = "ollama"
+        os.environ["OLLAMA_TIMEOUT_SECONDS"] = "not-a-number"
+        get_llm_client.cache_clear()
+        stream = io.StringIO()
+        with contextlib.redirect_stderr(stream):
+            client = get_llm_client()
+        assert isinstance(client, OllamaLLMClient)  # doesn't raise -- only LLM_CLIENT itself does
+        assert "OLLAMA_TIMEOUT_SECONDS" in stream.getvalue()
+    finally:
+        _restore_llm_client_env(prev)
+        if prev_timeout is not None:
+            os.environ["OLLAMA_TIMEOUT_SECONDS"] = prev_timeout
         else:
             os.environ.pop("OLLAMA_TIMEOUT_SECONDS", None)
 
