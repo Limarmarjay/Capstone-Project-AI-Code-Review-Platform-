@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import json
 import os
+import sys
+from functools import lru_cache
 from typing import Protocol
 
 from .types import Category
@@ -60,6 +62,16 @@ class LLMTimeout(LLMError):
     error, or a 5xx from the API."""
 
 
+class LLMConnectionError(LLMTimeout):
+    """The endpoint could not be reached at all (e.g. connection refused --
+    the server process isn't running), as opposed to being reached but
+    responding slowly or with a 5xx. A subclass of LLMTimeout so every
+    existing `except LLMTimeout` / `except LLMError` call site still
+    catches it unchanged; a caller that needs to tell "unreachable" apart
+    from "reached but slow" (e.g. to pick an HTTP status code) can catch
+    this specifically instead of inspecting the exception message."""
+
+
 class LLMPermanentError(LLMError):
     """Non-retryable failure: bad credentials, permission, a malformed
     request, a missing API key, or the SDK not being installed. Retrying
@@ -67,8 +79,13 @@ class LLMPermanentError(LLMError):
 
 
 class LLMClient(Protocol):
-    def complete(self, system: str, user: str) -> str:
-        """Return the raw text response, expected to be a JSON string."""
+    def complete(self, system: str, user: str, *, timeout: float | None = None) -> str:
+        """Return the raw text response, expected to be a JSON string.
+        `timeout`, if given, caps this call's own wait time -- never
+        looser than the client's own configured timeout. Optional: a
+        wrapper that only implements complete(system, user) is still a
+        valid LLMClient -- review() detects that and falls back to
+        calling it without this kwarg (see pipeline._accepts_timeout_kwarg)."""
         ...
 
 
@@ -95,7 +112,10 @@ class MockLLMClient:
         self.bad_shape = bad_shape
         self.call_count = 0  # lets retry tests assert how many attempts ran
 
-    def complete(self, system: str, user: str) -> str:
+    def complete(self, system: str, user: str, *, timeout: float | None = None) -> str:
+        # Instant and offline -- nothing to cap. Accepted only so this
+        # class advertises full LLMClient support, same as the two real
+        # clients below.
         self.call_count += 1
         if self.permanent_fail:
             raise LLMPermanentError("mock: simulated permanent failure (e.g. bad API key)")
@@ -156,7 +176,7 @@ class AnthropicLLMClient:
         self.model = model
         self.timeout = timeout
 
-    def complete(self, system: str, user: str) -> str:
+    def complete(self, system: str, user: str, *, timeout: float | None = None) -> str:
         try:
             import anthropic  # lazy
         except ImportError as e:  # pragma: no cover
@@ -166,8 +186,10 @@ class AnthropicLLMClient:
         if not api_key:
             raise LLMPermanentError("ANTHROPIC_API_KEY not set")
 
+        effective_timeout = self.timeout if timeout is None else min(self.timeout, timeout)
+
         try:
-            client = anthropic.Anthropic(api_key=api_key, timeout=self.timeout)
+            client = anthropic.Anthropic(api_key=api_key, timeout=effective_timeout)
             resp = client.messages.create(
                 model=self.model,
                 max_tokens=1500,
@@ -227,24 +249,53 @@ class OllamaLLMClient:
         model: str = "qwen2.5-coder:7b",
         host: str = "http://localhost:11434",
         timeout: float = 300.0,
+        temperature: float | None = None,
+        seed: int | None = None,
     ) -> None:
         self.model = model
         self.host = host.rstrip("/")
         self.timeout = timeout
+        # None means "don't send it, let Ollama use its own default" --
+        # existing callers that don't pass these get an unchanged payload.
+        self.temperature = temperature
+        self.seed = seed
 
-    def complete(self, system: str, user: str) -> str:
+    def complete(
+        self,
+        system: str,
+        user: str,
+        *,
+        json_schema: dict | None = FINDINGS_RESPONSE_SCHEMA,
+        timeout: float | None = None,
+    ) -> str:
         import urllib.error
         import urllib.request
 
-        payload = json.dumps({
+        effective_timeout = self.timeout if timeout is None else min(self.timeout, timeout)
+
+        payload_dict = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
             "stream": False,
-            "format": FINDINGS_RESPONSE_SCHEMA,
-        }).encode("utf-8")
+        }
+        # Defaults to the findings schema so every existing caller (the
+        # review pipeline, eval runner, check_llm.py) is unaffected; pass
+        # json_schema=None for free-text output with no shape constraint
+        # (e.g. a plain-prompt API that isn't asking for a review).
+        if json_schema is not None:
+            payload_dict["format"] = json_schema
+        options = {}
+        if self.temperature is not None:
+            options["temperature"] = self.temperature
+        if self.seed is not None:
+            options["seed"] = self.seed
+        if options:
+            payload_dict["options"] = options
+
+        payload = json.dumps(payload_dict).encode("utf-8")
         req = urllib.request.Request(
             f"{self.host}/api/chat",
             data=payload,
@@ -253,10 +304,10 @@ class OllamaLLMClient:
         )
 
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            with urllib.request.urlopen(req, timeout=effective_timeout) as resp:
                 body = resp.read()
         except TimeoutError as e:
-            raise LLMTimeout(f"Ollama request timed out after {self.timeout}s") from e
+            raise LLMTimeout(f"Ollama request timed out after {effective_timeout}s") from e
         except urllib.error.HTTPError as e:
             detail = e.read().decode("utf-8", errors="replace")
             if e.code == 404:
@@ -274,7 +325,7 @@ class OllamaLLMClient:
             # as transient for consistency with AnthropicLLMClient's
             # APIConnectionError handling, even though a fully-down local
             # server won't come back up between this attempt and the next.
-            raise LLMTimeout(f"Could not reach Ollama at {self.host}: {e.reason}") from e
+            raise LLMConnectionError(f"Could not reach Ollama at {self.host}: {e.reason}") from e
 
         try:
             parsed = json.loads(body)
@@ -285,6 +336,72 @@ class OllamaLLMClient:
         if not text.strip():
             raise LLMError("empty response from Ollama")
         return text
+
+
+@lru_cache(maxsize=1)
+def get_llm_client() -> LLMClient:
+    """App-level factory: builds the LLMClient to use based on
+    $LLM_CLIENT ('ollama' | 'anthropic' | 'mock', case-insensitive),
+    defaulting to 'ollama' when unset. Fails fast -- raises ValueError,
+    never falls back silently -- on any other value, so a typo in
+    deployment config surfaces immediately instead of silently running
+    a different client than intended.
+
+    Ollama's model/host use OllamaLLMClient's own constructor defaults:
+    no existing env var names them specifically (LLM_API_MODEL/
+    LLM_API_HOST are scoped to the standalone llm_review/api.py app, a
+    different path). Its timeout reads $OLLAMA_TIMEOUT_SECONDS, the
+    same variable run_review.py and eval/run_eval.py already read --
+    parsed independently here (not imported from run_review.py, which
+    already imports FROM this module and would create a circular
+    import) with the same "warn and use the default" fallback. An
+    invalid OLLAMA_TIMEOUT_SECONDS only warns; it never raises the way
+    an invalid LLM_CLIENT does, since it degrades to a sensible default
+    rather than picking the wrong client entirely.
+
+    Cached after the first call via lru_cache: every call after the
+    first returns the SAME instance, so a caller (e.g. a Flask route)
+    can call this inline on every request without rebuilding a client
+    each time. lru_cache's own internal lock makes the first,
+    cache-populating call safe under concurrent callers. Every instance
+    this factory can return is itself safe to share across concurrent
+    requests too: MockLLMClient/AnthropicLLMClient/OllamaLLMClient all
+    hold only construction-time config (model/host/timeout/etc.), never
+    mutate it inside complete(), and AnthropicLLMClient/OllamaLLMClient
+    build a fresh per-call request locally rather than reusing any
+    shared state. (The one exception, MockLLMClient.call_count, is a
+    debug counter with no effect on review correctness even if a count
+    is occasionally lost to a race under concurrent mock-mode use.)
+
+    Tests: call get_llm_client.cache_clear() before changing $LLM_CLIENT
+    within the same process -- otherwise this keeps returning the first
+    call's cached result regardless of the env var's new value.
+    """
+    choice = os.environ.get("LLM_CLIENT", "ollama").strip().lower()
+
+    if choice == "ollama":
+        kwargs = {}
+        raw_timeout = os.environ.get("OLLAMA_TIMEOUT_SECONDS", "").strip()
+        if raw_timeout:
+            try:
+                kwargs["timeout"] = float(raw_timeout)
+            except ValueError:
+                print(
+                    f"Warning: OLLAMA_TIMEOUT_SECONDS={raw_timeout!r} is not "
+                    f"a valid number; using OllamaLLMClient's own default.",
+                    file=sys.stderr,
+                )
+        return OllamaLLMClient(**kwargs)
+
+    if choice == "anthropic":
+        return AnthropicLLMClient()
+
+    if choice == "mock":
+        return MockLLMClient()
+
+    raise ValueError(
+        f"Unknown LLM_CLIENT={choice!r}; expected one of: ollama, anthropic, mock."
+    )
 
 
 def _static_id_for(text: str, keyword: str) -> str | None:
