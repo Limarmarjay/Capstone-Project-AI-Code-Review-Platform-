@@ -89,6 +89,46 @@ Everything depends on the `LLMClient` protocol in `llm_review/client.py`.
 model, use `AnthropicLLMClient`, or add an OpenAI client with the same
 `complete(system, user)` method — no other file changes.
 
+## External access to the local model
+
+`llm_review/api.py` is a **standalone Flask app**, separate from
+`backend/app` entirely, exposing the locally-running Ollama model
+(`qwen2.5-coder:7b` by default) to other projects as a plain prompt-in,
+text-out API. It does not run the review pipeline or send any review
+prompt -- it's a thin passthrough for free-text generation.
+
+```bash
+cp .env.example .env     # fill in LLM_API_KEY (required -- the app
+                          # refuses to start without it)
+python -m llm_review.api # runs on port 5100 by default (LLM_API_PORT)
+```
+
+```bash
+curl -X POST http://localhost:5100/api/llm/generate \
+  -H "X-LLM-API-Key: <your LLM_API_KEY>" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Say hello in three words.", "system": "You are terse."}'
+# {"text": "Hello there, friend.", "model": "qwen2.5-coder:7b", "latency_seconds": 1.2}
+```
+
+By default the app binds to `127.0.0.1` (loopback-only, `LLM_API_HOST`)
+with Flask's debug mode off -- reachable from this machine alone, even
+though the port is technically open. **For another team/project reaching
+this from off-machine:** set `LLM_API_HOST` to this Mac's Tailscale IP
+(not `0.0.0.0`, which would bind every interface, including any public
+one) before running `python -m llm_review.api`. This app's port (5100 by
+default) is the *only* thing that should ever be exposed via a tunnel
+(Tailscale recommended; ngrok as a fallback) -- never Ollama's own port
+(11434) directly. And since this is a personal machine, not a server:
+**it only works while this Mac is awake, Ollama is running, and this app
+is running** -- there's no uptime guarantee.
+
+Request limits: prompts over ~20,000 characters are rejected (413); each
+API key is capped at 10 requests/minute (429 with `Retry-After` past
+that); requests that don't complete within `LLM_API_TIMEOUT_SECONDS`
+(default 60s) return 504, and an unreachable/misconfigured Ollama
+returns 502 -- never a raw stack trace or exception string.
+
 ## Layout
 
 ```
@@ -98,7 +138,8 @@ llm_review/
   client.py      # LLMClient protocol, MockLLMClient, AnthropicLLMClient
   severity.py    # category→severity table + scoring
   pipeline.py    # run → parse → combine → severity → summary (+ fallback)
+  api.py         # standalone app exposing /api/llm/generate externally
 run_review.py    # CLI
-tests/           # 9 tests incl. fallback + redaction gate
+tests/           # unit tests incl. fallback + redaction gate + api.py
 schemas/         # shared input/output contracts
 ```

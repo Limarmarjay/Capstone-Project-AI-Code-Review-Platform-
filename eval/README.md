@@ -193,10 +193,10 @@ This surfaced while building `sql-injection-basic`'s incidental
 `db.connect(...)` call, fixed here by renaming that kwarg away from
 `password` (to `credentials`) rather than touching the scanner -- the
 eval target on that fixture was the SQL injection, not the connection
-call's kwarg name. `python-hardcoded-secret` and `java-hardcoded-secret`
-don't hit this, not because the limitation doesn't apply to them, but
-because their variable names (`api_key`, `SIGNING_KEY`) don't match any
-of `secrets_scanner`'s eight keyword patterns in the first place --
+call's kwarg name. `python-hardcoded-secret` doesn't hit this, not
+because the limitation doesn't apply to it, but because its variable
+name (`api_key`) doesn't match any of `secrets_scanner`'s eight keyword
+patterns in the first place --
 `generic_api_key`'s value-class is narrower (`[A-Za-z0-9_\-]{16,}`, no
 brackets, 16+ chars) and `[REDACTED]`'s brackets and length don't satisfy
 it.
