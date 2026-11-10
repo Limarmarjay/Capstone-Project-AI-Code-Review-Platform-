@@ -15,7 +15,7 @@ training pipeline might later ingest it as training data.
 
 Usage:
     python eval/run_eval.py
-    python eval/run_eval.py --fixture sql-injection-basic --fixture java-sql-injection
+    python eval/run_eval.py --fixture sql-injection-basic --fixture python-command-injection
     python eval/run_eval.py --save-baseline qwen2.5-coder-7b
 """
 import argparse
@@ -42,7 +42,7 @@ FIXTURES_DIR = os.path.join(REPO_ROOT, "eval", "fixtures")
 RESULTS_DIR = os.path.join(REPO_ROOT, "eval", "results")
 BASELINES_DIR = os.path.join(REPO_ROOT, "eval", "baselines")
 CHECK_LLM_SCRIPT = os.path.join(REPO_ROOT, "scripts", "check_llm.py")
-CLEAN_CASE_IDS = {"python-clean-add-logging", "python-clean-rename-variable", "java-clean-add-getter"}
+CLEAN_CASE_IDS = {"python-clean-add-logging", "python-clean-rename-variable"}
 
 
 class _ConnectionAwareOllamaClient:
