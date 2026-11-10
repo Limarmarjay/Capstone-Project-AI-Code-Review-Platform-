@@ -14,9 +14,14 @@ from static results alone.
 from __future__ import annotations
 
 import dataclasses
+import inspect
 import json
 import logging
+import math
+import os
 import re
+import sys
+import time
 import uuid
 
 from .client import LLMClient, LLMError, LLMPermanentError, MockLLMClient
@@ -38,10 +43,95 @@ log = logging.getLogger(__name__)
 
 MAX_LLM_ATTEMPTS = 2  # retries a transient failure once before falling back
 
+DEFAULT_LLM_REVIEW_BUDGET_SECONDS = 300.0  # same number as OllamaLLMClient's
+# own per-call default (client.py) -- a value the team already accepted as
+# "how long is reasonable to wait for a local Ollama call," reused here so
+# a 1-file diff's worst case stays in the same order of magnitude it was
+# before (previously up to MAX_LLM_ATTEMPTS x that value per file; now
+# capped at this total regardless of file count) while an N-file diff's
+# worst case becomes flat at this number instead of scaling with N.
 
-def review(data: dict, *, client: LLMClient | None = None) -> dict:
+
+def _default_llm_review_budget() -> float:
+    """Reads $LLM_REVIEW_BUDGET_SECONDS; falls back to
+    DEFAULT_LLM_REVIEW_BUDGET_SECONDS (with a stderr warning) if unset,
+    blank, not a valid number, or not a positive finite one (zero,
+    negative, inf, or nan would otherwise make the budget either
+    meaningless or never-exhausted)."""
+    raw = os.environ.get("LLM_REVIEW_BUDGET_SECONDS")
+    if not raw:
+        return DEFAULT_LLM_REVIEW_BUDGET_SECONDS
+
+    try:
+        value = float(raw)
+    except ValueError:
+        value = None
+
+    if value is None or not math.isfinite(value) or value <= 0:
+        print(
+            f"Warning: LLM_REVIEW_BUDGET_SECONDS={raw!r} is not a valid "
+            f"positive, finite number; using default "
+            f"{DEFAULT_LLM_REVIEW_BUDGET_SECONDS}.",
+            file=sys.stderr,
+        )
+        return DEFAULT_LLM_REVIEW_BUDGET_SECONDS
+    return value
+
+
+def _accepts_timeout_kwarg(client: LLMClient) -> bool:
+    """True iff client.complete() will accept a `timeout=` keyword --
+    declared explicitly, or via **kwargs. A wrapper whose complete() only
+    takes (system, user) -- SanitizingClient, eval/run_eval.py's
+    _ConnectionAwareOllamaClient, any test double shaped like either --
+    is still a perfectly valid LLMClient; it's just called without the
+    kwarg, with the budget's skip-ahead-of-time behavior (in _run_llm,
+    below) still fully in effect even though that wrapper can't propagate
+    a tighter per-call timeout to whatever it wraps.
+
+    Checked via signature introspection, once per call, rather than a
+    speculative call-and-catch-TypeError: a call that already happened
+    can have side effects (a real network request), so discovering
+    "unsupported" only after calling would risk a double call, or
+    misattributing some unrelated internal TypeError to this instead."""
+    try:
+        params = inspect.signature(client.complete).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(
+        p.name == "timeout" or p.kind is inspect.Parameter.VAR_KEYWORD
+        for p in params
+    )
+
+
+def review(
+    data: dict,
+    *,
+    client: LLMClient | None = None,
+    budget_seconds: float | None = None,
+) -> dict:
     """Entry point. Takes the analysis-input dict from #2, returns the
-    review-output dict for #4. `client` defaults to the offline mock."""
+    review-output dict for #4. `client` defaults to the offline mock.
+
+    `budget_seconds` caps the total wall-clock time spent on LLM calls
+    across every file in this diff (default: $LLM_REVIEW_BUDGET_SECONDS,
+    or DEFAULT_LLM_REVIEW_BUDGET_SECONDS if that's unset). Once it's
+    gone, remaining files skip the LLM entirely and keep only their
+    static findings. The overall llm_status reports PARTIAL -- so the
+    summary reflects a partial, not a full, AI review -- only if at
+    least one file still got a real LLM pass; if the budget ran out
+    without a single success, it's reported as TIMEOUT instead, since a
+    review where nothing succeeded isn't meaningfully "partial."
+
+    Worst case when `client` DOES accept a `timeout=` kwarg: roughly
+    `budget_seconds` total, since every in-flight call is itself capped
+    to whatever's left of the budget. Worst case when it doesn't (e.g.
+    wrapped in something that only implements complete(system, user),
+    such as SanitizingClient) is `budget_seconds` PLUS one call's own
+    configured timeout: the budget still stops any NEW attempt from
+    starting once it's gone, but a call already in flight when the
+    deadline passes can still run for up to that client's own timeout,
+    since nothing can cap it from outside without its cooperation.
+    """
     client = client or MockLLMClient()
     inp = AnalysisInput.from_dict(data)
 
@@ -73,12 +163,17 @@ def review(data: dict, *, client: LLMClient | None = None) -> dict:
                  "could not be redacted; LLM skipped",
         ).to_dict()
 
+    if budget_seconds is None:
+        budget_seconds = _default_llm_review_budget()
+    deadline = time.monotonic() + budget_seconds
+
     all_findings: list[Finding] = []
     llm_status = LLMStatus.SUCCESS
+    any_success = False
 
     for file in inp.files:
         redacted_file = _redacted_copy(file, redact_text)
-        llm_raw, status = _run_llm(redacted_file, client)
+        llm_raw, status = _run_llm(redacted_file, client, deadline=deadline)
         if status is not LLMStatus.SUCCESS:
             # First failure downgrades the whole run's status; later
             # failures on other files don't overwrite it, so the reported
@@ -88,7 +183,16 @@ def review(data: dict, *, client: LLMClient | None = None) -> dict:
                 llm_status = status
             all_findings.extend(_static_findings_only(redacted_file))
             continue
+        any_success = True
         all_findings.extend(_combine(redacted_file, llm_raw))
+
+    if llm_status is LLMStatus.PARTIAL and not any_success:
+        # The budget ran out, but nothing ever succeeded -- that's not a
+        # partial AI review (some files reviewed, some not), it's the
+        # LLM simply being unavailable for this whole diff. Report it
+        # the same way a plain timeout would be, rather than a
+        # more-specific-sounding status that overstates what happened.
+        llm_status = LLMStatus.TIMEOUT
 
     output = ReviewOutput(
         submission_id=inp.submission_id,
@@ -120,7 +224,11 @@ def _redacted_copy(file: ReviewFile, redact) -> ReviewFile:
 
 
 def _run_llm(
-    file: ReviewFile, client: LLMClient, *, max_attempts: int = MAX_LLM_ATTEMPTS
+    file: ReviewFile,
+    client: LLMClient,
+    *,
+    deadline: float,
+    max_attempts: int = MAX_LLM_ATTEMPTS,
 ) -> tuple[list[dict], LLMStatus]:
     """Call the LLM and parse its JSON. Returns (parsed_findings, status).
 
@@ -129,15 +237,34 @@ def _run_llm(
     any of those can be a one-off fluke. Never retries LLMPermanentError:
     a bad API key or an unsupported request won't succeed on a second try,
     so retrying it would only waste latency.
+
+    `deadline` is a time.monotonic() timestamp shared across every file
+    in this review() call -- review()'s total time budget. If it's
+    already passed before this file's first attempt, no call is made at
+    all and this returns PARTIAL immediately. Every attempt that does
+    happen passes `timeout=` (the time left before deadline) to
+    complete() -- but only if the client actually accepts that kwarg;
+    see _accepts_timeout_kwarg.
     """
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return [], LLMStatus.PARTIAL
+
     user = build_user_prompt(file)
+    supports_timeout = _accepts_timeout_kwarg(client)
     status = LLMStatus.TIMEOUT
     for _attempt in range(max_attempts):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return [], LLMStatus.PARTIAL
+        kwargs = {"timeout": remaining} if supports_timeout else {}
         try:
-            raw = client.complete(SYSTEM_PROMPT, user)
-        except LLMPermanentError:
+            raw = client.complete(SYSTEM_PROMPT, user, **kwargs)
+        except LLMPermanentError as e:
+            log.warning("LLM call failed permanently: %s: %s", type(e).__name__, e)
             return [], LLMStatus.INVALID_RESPONSE
-        except LLMError:
+        except LLMError as e:
+            log.warning("LLM call failed transiently: %s: %s", type(e).__name__, e)
             status = LLMStatus.TIMEOUT
             continue
 
@@ -319,7 +446,12 @@ def _summarize(findings: list[Finding], status: LLMStatus) -> str:
         counts[f.severity.value] = counts.get(f.severity.value, 0) + 1
     order = ["critical", "high", "medium", "low"]
     bits = [f"{counts[s]} {s}" for s in order if s in counts]
-    prefix = "" if status is LLMStatus.SUCCESS else "[LLM unavailable — static only] "
+    if status is LLMStatus.SUCCESS:
+        prefix = ""
+    elif status is LLMStatus.PARTIAL:
+        prefix = "[Partial AI review — time budget ran out before every file was reviewed] "
+    else:
+        prefix = "[LLM unavailable — static only] "
     return f"{prefix}{len(findings)} issue(s): " + ", ".join(bits) + "."
 
 
