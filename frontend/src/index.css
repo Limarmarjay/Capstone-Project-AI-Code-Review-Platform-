@@ -31,7 +31,7 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme='light']) {
     --text: #9ca3af;
     --text-h: #f3f4f6;
     --bg: #16171d;
@@ -50,6 +50,21 @@
   }
 }
 
+/* Explicit choice (via the theme toggle) wins over the OS setting in both directions. */
+:root[data-theme='dark'] {
+  --text: #9ca3af;
+  --text-h: #f3f4f6;
+  --bg: #16171d;
+  --border: #2e303a;
+  --code-bg: #1f2028;
+  --accent: #4da6ff;
+  --accent-bg: rgba(77, 166, 255, 0.15);
+  --accent-border: rgba(77, 166, 255, 0.5);
+  --social-bg: rgba(47, 48, 58, 0.5);
+  --shadow:
+    rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
+}
+
 #root {
   width: 1126px;
   max-width: 100%;
@@ -64,6 +79,7 @@
 
 body {
   margin: 0;
+  background: var(--social-bg);
 }
 
 h1,

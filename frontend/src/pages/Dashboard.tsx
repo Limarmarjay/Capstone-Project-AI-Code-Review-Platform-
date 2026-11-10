@@ -10,6 +10,8 @@ import {
 } from '../api'
 import type { GithubPullRequest, GithubRepo, Submission } from '../api'
 import { useAuth } from '../AuthContext'
+import BrandIcon from '../BrandIcon'
+import ThemeToggle from '../ThemeToggle'
 import '../App.css'
 
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024 // 10 MB, per REQUIREMENTS.md functional requirement #3
@@ -106,13 +108,13 @@ interface FileUploadFieldProps {
   accept: string
   submissionType: 'patch' | 'diff'
   token: string
+  onResult: (submission: Submission) => void
 }
 
-function FileUploadField({ label, accept, submissionType, token }: FileUploadFieldProps) {
+function FileUploadField({ label, accept, submissionType, token, onResult }: FileUploadFieldProps) {
   const [fileName, setFileName] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
-  const [submission, setSubmission] = useState<Submission | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const handleChange = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -124,20 +126,18 @@ function FileUploadField({ label, accept, submissionType, token }: FileUploadFie
         `"${file.name}" exceeds the 10 MB size limit and was not uploaded.`,
       )
       setFileName(null)
-      setSubmission(null)
       event.target.value = ''
       return
     }
 
     setError(null)
     setFileName(null)
-    setSubmission(null)
     setUploading(true)
 
     try {
       const result = await createSubmission(submissionType, file, token)
       setFileName(file.name)
-      setSubmission(result)
+      onResult(result)
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Request failed.'
       setError(`Upload failed: ${message}`)
@@ -166,12 +166,11 @@ function FileUploadField({ label, accept, submissionType, token }: FileUploadFie
       />
       {fileName && <p className="upload-filename">{fileName}</p>}
       {error && <p className="upload-error">{error}</p>}
-      {submission && <SubmissionResults submission={submission} />}
     </div>
   )
 }
 
-function GithubPanel({ token }: { token: string }) {
+function GithubPanel({ token, onResult }: { token: string; onResult: (submission: Submission) => void }) {
   const [connected, setConnected] = useState<boolean | null>(null)
   const [patToken, setPatToken] = useState('')
   const [connecting, setConnecting] = useState(false)
@@ -180,7 +179,6 @@ function GithubPanel({ token }: { token: string }) {
   const [selectedRepo, setSelectedRepo] = useState('')
   const [selectedPullNumber, setSelectedPullNumber] = useState('')
   const [submitting, setSubmitting] = useState(false)
-  const [submission, setSubmission] = useState<Submission | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -214,7 +212,6 @@ function GithubPanel({ token }: { token: string }) {
     setSelectedRepo(repo)
     setSelectedPullNumber('')
     setPulls([])
-    setSubmission(null)
     if (!repo) return
 
     listGithubPulls(token, repo)
@@ -227,11 +224,10 @@ function GithubPanel({ token }: { token: string }) {
     if (!pull) return
 
     setError(null)
-    setSubmission(null)
     setSubmitting(true)
     try {
       const result = await submitPullRequest(token, pull)
-      setSubmission(result)
+      onResult(result)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to submit pull request.')
     } finally {
@@ -301,21 +297,48 @@ function GithubPanel({ token }: { token: string }) {
       )}
 
       {error && <p className="upload-error">{error}</p>}
-      {submission && <SubmissionResults submission={submission} />}
+
+      <button
+        type="button"
+        className="link-button"
+        onClick={() => {
+          setConnected(false)
+          setPatToken('')
+          setError(null)
+        }}
+      >
+        Use a different token
+      </button>
     </div>
   )
 }
 
+type TabKey = 'patch' | 'diff' | 'github'
+
+const TABS: { key: TabKey; label: string }[] = [
+  { key: 'patch', label: 'Upload Patch' },
+  { key: 'diff', label: 'Upload Git Diff' },
+  { key: 'github', label: 'Connect GitHub' },
+]
+
 function Dashboard() {
   const { user, token, logout } = useAuth()
+  const [activeTab, setActiveTab] = useState<TabKey>('patch')
+  const [result, setResult] = useState<Submission | null>(null)
 
   if (!token) return null
 
   return (
     <div className="dashboard">
       <header className="dashboard-header">
-        <h1>AI Code Review Platform</h1>
+        <h1>
+          <span className="brand-mark" aria-hidden="true">
+            <BrandIcon />
+          </span>
+          AI Code Review Platform
+        </h1>
         <div className="dashboard-header-actions">
+          <ThemeToggle />
           <span className="username-badge">{user?.username}</span>
           <button type="button" className="logout-button" onClick={logout}>
             Log Out
@@ -325,25 +348,48 @@ function Dashboard() {
       <main className="dashboard-main">
         <h2>Welcome back, {user?.username}</h2>
         <p className="dashboard-subtitle">
-          Upload the patch or git diff file (Python only) you would like to review, or connect
+          Upload the patch or git diff file you would like to review, or connect
           GitHub to submit a pull request.
         </p>
 
-        <div className="upload-section">
-          <FileUploadField
-            label="Upload Patch File"
-            accept=".patch,.diff,text/plain"
-            submissionType="patch"
-            token={token}
-          />
-          <FileUploadField
-            label="Upload Git Diff File"
-            accept=".diff,.patch,text/plain"
-            submissionType="diff"
-            token={token}
-          />
-          <GithubPanel token={token} />
+        <div className="tab-bar" role="tablist">
+          {TABS.map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === tab.key}
+              className="tab-button"
+              onClick={() => setActiveTab(tab.key)}
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
+
+        <div className="tab-panel">
+          {activeTab === 'patch' && (
+            <FileUploadField
+              label="Upload Patch File"
+              accept=".patch,.diff,text/plain"
+              submissionType="patch"
+              token={token}
+              onResult={setResult}
+            />
+          )}
+          {activeTab === 'diff' && (
+            <FileUploadField
+              label="Upload Git Diff File"
+              accept=".diff,.patch,text/plain"
+              submissionType="diff"
+              token={token}
+              onResult={setResult}
+            />
+          )}
+          {activeTab === 'github' && <GithubPanel token={token} onResult={setResult} />}
+        </div>
+
+        {result && <SubmissionResults submission={result} />}
       </main>
     </div>
   )

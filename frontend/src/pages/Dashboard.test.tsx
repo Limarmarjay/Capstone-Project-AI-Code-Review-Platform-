@@ -2,6 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AuthProvider } from '../AuthContext'
+import { ThemeProvider } from '../ThemeContext'
 import * as api from '../api'
 import Dashboard from './Dashboard'
 
@@ -11,9 +12,11 @@ function renderDashboard() {
   localStorage.setItem('token', 'test-token')
   localStorage.setItem('user', JSON.stringify({ id: '1', username: 'alice' }))
   return render(
-    <AuthProvider>
-      <Dashboard />
-    </AuthProvider>,
+    <ThemeProvider>
+      <AuthProvider>
+        <Dashboard />
+      </AuthProvider>
+    </ThemeProvider>,
   )
 }
 
@@ -23,6 +26,11 @@ async function uploadFile(buttonName: RegExp, fileContent: string, fileName: str
   const input = button.parentElement!.querySelector('input[type="file"]') as HTMLInputElement
   const file = new File([fileContent], fileName, { type: 'text/plain' })
   await user.upload(input, file)
+}
+
+async function clickTab(name: RegExp) {
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('tab', { name }))
 }
 
 describe('Dashboard upload flow', () => {
@@ -77,6 +85,7 @@ describe('Dashboard upload flow', () => {
     )
 
     renderDashboard()
+    await clickTab(/Upload Git Diff/i)
     await uploadFile(/Upload Git Diff File/i, 'diff --git a/x.js b/x.js', 'mixed.diff')
 
     expect(
@@ -88,6 +97,7 @@ describe('Dashboard upload flow', () => {
     vi.mocked(api.createSubmission).mockRejectedValue(new Error('Analysis failed unexpectedly.'))
 
     renderDashboard()
+    await clickTab(/Upload Git Diff/i)
     await uploadFile(/Upload Git Diff File/i, 'diff --git a/x.py b/x.py', 'x.diff')
 
     expect(await screen.findByText('Upload failed: Analysis failed unexpectedly.')).toBeInTheDocument()
@@ -146,6 +156,7 @@ describe('Dashboard GitHub panel', () => {
     vi.mocked(api.getGithubStatus).mockResolvedValue({ connected: false })
 
     renderDashboard()
+    await clickTab(/Connect GitHub/i)
 
     expect(await screen.findByLabelText(/Personal Access Token/i)).toBeInTheDocument()
     expect(api.listGithubRepos).not.toHaveBeenCalled()
@@ -157,6 +168,7 @@ describe('Dashboard GitHub panel', () => {
     vi.mocked(api.listGithubRepos).mockResolvedValue([{ id: 1, full_name: 'alice/project' }])
 
     renderDashboard()
+    await clickTab(/Connect GitHub/i)
     const user = userEvent.setup()
 
     const tokenInput = await screen.findByLabelText(/Personal Access Token/i)
@@ -173,6 +185,7 @@ describe('Dashboard GitHub panel', () => {
     vi.mocked(api.connectGithub).mockRejectedValue(new Error('That token could not be verified with GitHub.'))
 
     renderDashboard()
+    await clickTab(/Connect GitHub/i)
     const user = userEvent.setup()
 
     const tokenInput = await screen.findByLabelText(/Personal Access Token/i)
@@ -209,6 +222,7 @@ describe('Dashboard GitHub panel', () => {
     })
 
     renderDashboard()
+    await clickTab(/Connect GitHub/i)
     const user = userEvent.setup()
 
     const repoSelect = await screen.findByLabelText('Repository')
