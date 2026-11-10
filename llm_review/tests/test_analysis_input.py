@@ -1,16 +1,24 @@
 import json
 from dataclasses import asdict
+from pathlib import Path
 
 import pytest
 
-from backend.services.analysis_input import (
+REPO_ROOT = Path(__file__).resolve().parents[2]
+STATIC_ROOT = REPO_ROOT / "Static_checks_and_sec_rules"
+SAMPLES = STATIC_ROOT / "samples"
+
+from Static_checks_and_sec_rules.services.analysis_input import (
     bandit_finding_to_static_finding,
     build_analysis_input,
     build_review_file,
     parsed_hunk_to_review_hunk,
     scan_python_file_to_static_findings,
 )
-from backend.services.bandit_scanner import ScanError
+
+from Static_checks_and_sec_rules.services.bandit_scanner import ScanError
+
+
 from repo_diff_pipeline.models import (
     ChangeType,
     DiffLine,
@@ -48,7 +56,7 @@ def test_bandit_finding_converts_to_static_finding():
 
 def test_python_file_scans_redacts_and_converts_findings():
     findings = scan_python_file_to_static_findings(
-        "samples/vulnerable.py",
+        str(SAMPLES / "vulnerable.py"),
         "src/vulnerable.py",
     )
 
@@ -67,7 +75,7 @@ def test_python_file_scans_redacts_and_converts_findings():
 def test_unparseable_file_raises_instead_of_returning_empty():
     with pytest.raises(ScanError, match="File could not be analyzed"):
         scan_python_file_to_static_findings(
-            "samples/broken.py",
+            str(SAMPLES / "broken.py"),
             "src/broken.py",
         )
 
@@ -156,7 +164,7 @@ def test_build_review_file_combines_hunks_and_static_findings():
 
     result = build_review_file(
         file_diff,
-        ".",
+        str(STATIC_ROOT),
     )
 
     assert result["file_path"] == "samples/vulnerable.py"
@@ -186,7 +194,7 @@ def test_path_outside_repo_is_rejected():
     with pytest.raises(ScanError, match="outside the repository"):
         build_review_file(
             file_diff,
-            "samples",
+            str(SAMPLES),
         )
 
 
@@ -208,7 +216,7 @@ def test_build_analysis_input_continues_after_file_scan_error():
 
     analysis_input, scan_issues = build_analysis_input(
         parsed_diff,
-        ".",
+        str(STATIC_ROOT),
         submission_id="sub_test",
         source_type="git_diff",
         repository="example/repo",
@@ -288,7 +296,7 @@ def test_built_analysis_input_matches_llm_contract():
 
     analysis_input, scan_issues = build_analysis_input(
         parsed_diff,
-        ".",
+        str(STATIC_ROOT),
         submission_id="sub_contract",
         source_type="git_diff",
         repository="example/repo",

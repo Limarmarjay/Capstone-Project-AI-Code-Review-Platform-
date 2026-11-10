@@ -212,9 +212,10 @@ class AnthropicLLMClient:
             # fast rather than assume it's safe to retry.
             raise LLMPermanentError(str(e)) from e
 
-        # Concatenate text blocks.
+        # Concatenate text blocks. Checking block.type directly (not via
+        # getattr) lets the type checker narrow the union to TextBlock.
         text = "".join(
-            block.text for block in resp.content if getattr(block, "type", "") == "text"
+            block.text for block in resp.content if block.type == "text"
         )
         if not text.strip():
             raise LLMError("empty response")

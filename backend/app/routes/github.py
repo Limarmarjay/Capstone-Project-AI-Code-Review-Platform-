@@ -1,74 +1,62 @@
-import os
+"""
+'/api/github' — lets a user store a GitHub Personal Access Token and browse
+their repos/PRs through it. Matches repo_diff_pipeline.github_client's
+token-based auth (check_github_connected / fetch_pr_*) rather than a full
+OAuth App flow, since that's what the PR-ingestion pipeline already expects.
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
 
 import requests
-from flask import Blueprint, g, jsonify, redirect, request
+from flask import Blueprint, g, jsonify, request
 
+from app.crypto import decrypt_token, encrypt_token
 from app.db import db
-from app.tokens import decode_token, require_auth
+from app.tokens import require_auth
+
+# repo_diff_pipeline lives at the repo root, a sibling of backend/ — make it
+# importable regardless of the working directory the Flask app starts from.
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from repo_diff_pipeline import github_client  # noqa: E402
 
 github_bp = Blueprint('github', __name__, url_prefix='/api/github')
+github_connections = db['GitHub_connection']
 
-# Placeholders — replace with a real GitHub OAuth App's credentials.
-GITHUB_CLIENT_ID = os.environ.get('GITHUB_CLIENT_ID', 'REPLACE_WITH_CLIENT_ID')
-GITHUB_CLIENT_SECRET = os.environ.get('GITHUB_CLIENT_SECRET', 'REPLACE_WITH_CLIENT_SECRET')
-GITHUB_CALLBACK_URL = os.environ.get('GITHUB_CALLBACK_URL', 'http://127.0.0.1:5002/api/github/callback')
-FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:5173')
-
-github_connections = db['github_connection']
+GITHUB_API = 'https://api.github.com'
+REQUEST_TIMEOUT = 15
 
 
 def _get_connection(user_id: str):
     return github_connections.find_one({'user_id': user_id})
 
 
-@github_bp.get('/connect')
+def _get_decrypted_token(user_id: str) -> str | None:
+    connection = _get_connection(user_id)
+    return decrypt_token(connection['token']) if connection else None
+
+
+@github_bp.post('/connect')
+@require_auth
 def connect():
-    token = request.args.get('token', '')
-    try:
-        decode_token(token)
-    except Exception:
-        return jsonify({'error': 'Invalid or missing token.'}), 401
+    body = request.get_json(silent=True) or {}
+    token = (body.get('token') or '').strip()
+    if not token:
+        return jsonify({'error': 'A personal access token is required.'}), 400
 
-    authorize_url = (
-        'https://github.com/login/oauth/authorize'
-        f'?client_id={GITHUB_CLIENT_ID}'
-        f'&redirect_uri={GITHUB_CALLBACK_URL}'
-        '&scope=repo'
-        f'&state={token}'
-    )
-    return redirect(authorize_url)
-
-
-@github_bp.get('/callback')
-def callback():
-    code = request.args.get('code')
-    state = request.args.get('state', '')
-    try:
-        user_id = decode_token(state)
-    except Exception:
-        return redirect(f'{FRONTEND_URL}/?github_error=invalid_state')
-
-    token_response = requests.post(
-        'https://github.com/login/oauth/access_token',
-        headers={'Accept': 'application/json'},
-        data={
-            'client_id': GITHUB_CLIENT_ID,
-            'client_secret': GITHUB_CLIENT_SECRET,
-            'code': code,
-            'redirect_uri': GITHUB_CALLBACK_URL,
-        },
-        timeout=10,
-    )
-    access_token = token_response.json().get('access_token')
-    if not access_token:
-        return redirect(f'{FRONTEND_URL}/?github_error=exchange_failed')
+    if not github_client.check_github_connected(token):
+        return jsonify({'error': 'That token could not be verified with GitHub.'}), 400
 
     github_connections.update_one(
-        {'user_id': user_id},
-        {'$set': {'user_id': user_id, 'access_token': access_token}},
+        {'user_id': g.user_id},
+        {'$set': {'user_id': g.user_id, 'token': encrypt_token(token)}},
         upsert=True,
     )
-    return redirect(f'{FRONTEND_URL}/?github_connected=1')
+    return jsonify({'connected': True}), 201
 
 
 @github_bp.get('/status')
@@ -80,15 +68,18 @@ def status():
 @github_bp.get('/repos')
 @require_auth
 def list_repos():
-    connection = _get_connection(g.user_id)
-    if not connection:
+    token = _get_decrypted_token(g.user_id)
+    if not token:
         return jsonify({'error': 'GitHub is not connected.'}), 400
 
     response = requests.get(
-        'https://api.github.com/user/repos',
-        headers={'Authorization': f'Bearer {connection["access_token"]}'},
+        f'{GITHUB_API}/user/repos',
+        headers={
+            'Authorization': f'Bearer {token}',
+            'Accept': 'application/vnd.github+json',
+        },
         params={'sort': 'updated', 'per_page': 50},
-        timeout=10,
+        timeout=REQUEST_TIMEOUT,
     )
     return jsonify(response.json()), response.status_code
 
@@ -96,14 +87,17 @@ def list_repos():
 @github_bp.get('/repos/<owner>/<repo>/pulls')
 @require_auth
 def list_pulls(owner, repo):
-    connection = _get_connection(g.user_id)
-    if not connection:
+    token = _get_decrypted_token(g.user_id)
+    if not token:
         return jsonify({'error': 'GitHub is not connected.'}), 400
 
     response = requests.get(
-        f'https://api.github.com/repos/{owner}/{repo}/pulls',
-        headers={'Authorization': f'Bearer {connection["access_token"]}'},
+        f'{GITHUB_API}/repos/{owner}/{repo}/pulls',
+        headers={
+            'Authorization': f'Bearer {token}',
+            'Accept': 'application/vnd.github+json',
+        },
         params={'state': 'open', 'per_page': 50},
-        timeout=10,
+        timeout=REQUEST_TIMEOUT,
     )
     return jsonify(response.json()), response.status_code

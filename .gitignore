@@ -10,7 +10,12 @@ __pycache__/
 .env
 .env.*
 !.env.example
+<<<<<<< HEAD
 
 # eval/run_eval.py's per-run output; eval/baselines/ holds the committed
 # reference runs instead.
 eval/results/
+=======
+.vscode/settings.json
+backend/pyrightconfig.json
+>>>>>>> origin/main
