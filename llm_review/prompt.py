@@ -178,7 +178,7 @@ def build_user_prompt(file: ReviewFile) -> str:
         for sf in file.static_findings:
             parts.append(
                 f"- [{sf.finding_id}] ({sf.tool}:{sf.rule_id}) "
-                f"line {sf.line} — {sf.category}: {sf.message}"
+                f"line {sf.line} — {sf.message}"
             )
     else:
         parts.append("STATIC ANALYSIS FINDINGS: none")
