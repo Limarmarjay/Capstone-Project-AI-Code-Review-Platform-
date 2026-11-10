@@ -77,8 +77,13 @@ class LLMPermanentError(LLMError):
 
 
 class LLMClient(Protocol):
-    def complete(self, system: str, user: str) -> str:
-        """Return the raw text response, expected to be a JSON string."""
+    def complete(self, system: str, user: str, *, timeout: float | None = None) -> str:
+        """Return the raw text response, expected to be a JSON string.
+        `timeout`, if given, caps this call's own wait time -- never
+        looser than the client's own configured timeout. Optional: a
+        wrapper that only implements complete(system, user) is still a
+        valid LLMClient -- review() detects that and falls back to
+        calling it without this kwarg (see pipeline._accepts_timeout_kwarg)."""
         ...
 
 
@@ -105,7 +110,10 @@ class MockLLMClient:
         self.bad_shape = bad_shape
         self.call_count = 0  # lets retry tests assert how many attempts ran
 
-    def complete(self, system: str, user: str) -> str:
+    def complete(self, system: str, user: str, *, timeout: float | None = None) -> str:
+        # Instant and offline -- nothing to cap. Accepted only so this
+        # class advertises full LLMClient support, same as the two real
+        # clients below.
         self.call_count += 1
         if self.permanent_fail:
             raise LLMPermanentError("mock: simulated permanent failure (e.g. bad API key)")
@@ -166,7 +174,7 @@ class AnthropicLLMClient:
         self.model = model
         self.timeout = timeout
 
-    def complete(self, system: str, user: str) -> str:
+    def complete(self, system: str, user: str, *, timeout: float | None = None) -> str:
         try:
             import anthropic  # lazy
         except ImportError as e:  # pragma: no cover
@@ -176,8 +184,10 @@ class AnthropicLLMClient:
         if not api_key:
             raise LLMPermanentError("ANTHROPIC_API_KEY not set")
 
+        effective_timeout = self.timeout if timeout is None else min(self.timeout, timeout)
+
         try:
-            client = anthropic.Anthropic(api_key=api_key, timeout=self.timeout)
+            client = anthropic.Anthropic(api_key=api_key, timeout=effective_timeout)
             resp = client.messages.create(
                 model=self.model,
                 max_tokens=1500,
@@ -254,9 +264,12 @@ class OllamaLLMClient:
         user: str,
         *,
         json_schema: dict | None = FINDINGS_RESPONSE_SCHEMA,
+        timeout: float | None = None,
     ) -> str:
         import urllib.error
         import urllib.request
+
+        effective_timeout = self.timeout if timeout is None else min(self.timeout, timeout)
 
         payload_dict = {
             "model": self.model,
@@ -289,10 +302,10 @@ class OllamaLLMClient:
         )
 
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            with urllib.request.urlopen(req, timeout=effective_timeout) as resp:
                 body = resp.read()
         except TimeoutError as e:
-            raise LLMTimeout(f"Ollama request timed out after {self.timeout}s") from e
+            raise LLMTimeout(f"Ollama request timed out after {effective_timeout}s") from e
         except urllib.error.HTTPError as e:
             detail = e.read().decode("utf-8", errors="replace")
             if e.code == 404:
