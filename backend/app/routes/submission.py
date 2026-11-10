@@ -37,6 +37,7 @@ from services.submission_analysis import (  # noqa: E402
     SubmissionAnalysisError,
     analyze_parsed_submission,
 )
+from llm_review.client import get_llm_client  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -292,6 +293,7 @@ def create():
             submission_id=submission_id,
             submission_type=submission_type,
             filename=filename,
+            client=get_llm_client(),
         )
     except SubmissionAnalysisError as exc:
         log.info('Submission analysis rejected: %s', exc)

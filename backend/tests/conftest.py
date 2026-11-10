@@ -16,6 +16,7 @@ from pathlib import Path
 # module load time.
 os.environ.setdefault('MONGO_DB_NAME', 'Capstone_Proj_Database_test')
 os.environ.setdefault('JWT_SECRET', 'test-secret-do-not-use-in-prod')
+os.environ.setdefault('LLM_CLIENT', 'mock')
 # A real Fernet key (app.crypto requires one), but test-only — never used outside this suite.
 os.environ.setdefault('ENCRYPTION_KEY', 'ZgmSwe8BrrHlZA4d4-rru5rSBnb6YEr06zcazJyiCOg=')
 
