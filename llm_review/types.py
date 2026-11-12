@@ -45,6 +45,14 @@ class LLMStatus(str, Enum):
     INVALID_RESPONSE = "invalid_response"
     TIMEOUT = "timeout"
     SKIPPED = "skipped"
+    PARTIAL = "partial"  # review()'s time budget ran out before every
+    # file got an LLM pass, but at least one file did succeed; the rest
+    # are static-only. Distinct from TIMEOUT (a specific call was
+    # attempted and didn't come back in time) and SKIPPED (redaction
+    # wasn't confirmed, so the LLM was never called at all). If no file
+    # ever succeeds, review() reports TIMEOUT instead of this -- a
+    # budget that ran out without a single success isn't meaningfully
+    # "partial," it's just the LLM being unavailable.
 
 
 # ---- Input side (from #2) ----------------------------------------------

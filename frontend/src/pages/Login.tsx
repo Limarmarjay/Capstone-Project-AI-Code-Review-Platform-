@@ -2,7 +2,10 @@ import { useState } from 'react'
 import type { SubmitEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { login } from '../api'
+import AuthBrandPanel from '../AuthBrandPanel'
 import { useAuth } from '../AuthContext'
+import PasswordField from '../PasswordField'
+import ThemeToggle from '../ThemeToggle'
 import '../App.css'
 
 function Login() {
@@ -26,27 +29,23 @@ function Login() {
 
   return (
     <div className="auth-page">
-      <form className="auth-form" onSubmit={handleSubmit}>
-        <h1>Log In</h1>
-        <label>
-          Username
-          <input value={username} onChange={(e) => setUsername(e.target.value)} required />
-        </label>
-        <label>
-          Password
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-          />
-        </label>
-        {error && <p className="auth-error">{error}</p>}
-        <button type="submit">Log In</button>
-        <p>
-          Don't have an account? <Link to="/signup">Sign up</Link>
-        </p>
-      </form>
+      <ThemeToggle />
+      <div className="auth-layout">
+        <AuthBrandPanel />
+        <form className="auth-form" onSubmit={handleSubmit}>
+          <h1>Log In</h1>
+          <label>
+            Username
+            <input value={username} onChange={(e) => setUsername(e.target.value)} required />
+          </label>
+          <PasswordField label="Password" value={password} onChange={setPassword} required />
+          {error && <p className="auth-error">{error}</p>}
+          <button type="submit">Log In</button>
+          <p>
+            Don't have an account? <Link to="/signup">Sign up</Link>
+          </p>
+        </form>
+      </div>
     </div>
   )
 }

@@ -1,0 +1,19 @@
+diff --git a/app.py b/app.py
+index 1111111..2222222 100644
+--- a/app.py
++++ b/app.py
+@@ -1,3 +1,5 @@
+ import os
+-print("hello")
++import sys
++import json
++print("hello, world")
+ def main():
+diff --git a/utils/helpers.py b/utils/helpers.py
+index 3333333..4444444 100644
+--- a/utils/helpers.py
++++ b/utils/helpers.py
+@@ -1,2 +1,3 @@
+ def add(a, b):
+     return a + b
++# helper functions

@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import sys
+import time
 import types
 import urllib.error
 import urllib.request
@@ -24,17 +25,22 @@ from llm_review.client import (
     LLMTimeout,
     MockLLMClient,
     OllamaLLMClient,
+    get_llm_client,
 )
 from llm_review.severity import assign_severity, score
 from llm_review.types import (
     Category,
+    Hunk,
     LLMStatus,
     ReviewFile,
     Severity,
     StaticFinding,
 )
 from llm_review.pipeline import (
+    DEFAULT_LLM_REVIEW_BUDGET_SECONDS,
+    _accepts_timeout_kwarg,
     _combine,
+    _default_llm_review_budget,
     _parse_json,
     _run_llm,
     _static_baseline,
@@ -614,7 +620,7 @@ def test_ollama_client_empty_content_raises():
 def test_ollama_client_flows_through_run_llm_end_to_end():
     body = json.dumps({"message": {"role": "assistant", "content": '{"findings": []}'}}).encode()
     with _fake_urlopen(response_body=body):
-        findings, status = _run_llm(_empty_review_file(), OllamaLLMClient())
+        findings, status = _run_llm(_empty_review_file(), OllamaLLMClient(), deadline=float("inf"))
     assert status == LLMStatus.SUCCESS
     assert findings == []
 
@@ -692,6 +698,114 @@ def test_default_ollama_timeout_falls_back_on_blank_or_invalid_value():
             os.environ.pop("OLLAMA_TIMEOUT_SECONDS", None)
 
 
+# ---- get_llm_client: config-based client selection -----------------------
+
+def _reset_llm_client_env_and_cache():
+    """Returns the previous $LLM_CLIENT value (or None) so a test can
+    restore it; always clears the lru_cache so the next get_llm_client()
+    call re-reads the env var instead of returning a stale instance."""
+    prev = os.environ.get("LLM_CLIENT")
+    get_llm_client.cache_clear()
+    return prev
+
+
+def _restore_llm_client_env(prev):
+    if prev is not None:
+        os.environ["LLM_CLIENT"] = prev
+    else:
+        os.environ.pop("LLM_CLIENT", None)
+    get_llm_client.cache_clear()
+
+
+def test_get_llm_client_defaults_to_ollama_when_unset():
+    prev = _reset_llm_client_env_and_cache()
+    try:
+        os.environ.pop("LLM_CLIENT", None)
+        get_llm_client.cache_clear()
+        assert isinstance(get_llm_client(), OllamaLLMClient)
+    finally:
+        _restore_llm_client_env(prev)
+
+
+def test_get_llm_client_maps_each_value_to_the_right_class():
+    prev = _reset_llm_client_env_and_cache()
+    try:
+        for value, expected_cls in [
+            ("ollama", OllamaLLMClient),
+            ("anthropic", AnthropicLLMClient),
+            ("mock", MockLLMClient),
+            ("OLLAMA", OllamaLLMClient),   # case-insensitive
+            ("Mock", MockLLMClient),
+        ]:
+            os.environ["LLM_CLIENT"] = value
+            get_llm_client.cache_clear()
+            assert isinstance(get_llm_client(), expected_cls), value
+    finally:
+        _restore_llm_client_env(prev)
+
+
+def test_get_llm_client_raises_on_unknown_value():
+    prev = _reset_llm_client_env_and_cache()
+    try:
+        os.environ["LLM_CLIENT"] = "openai"
+        get_llm_client.cache_clear()
+        try:
+            get_llm_client()
+        except ValueError as e:
+            assert "openai" in str(e)
+            assert "ollama" in str(e)  # lists the valid choices
+        else:
+            raise AssertionError("expected ValueError for an unknown LLM_CLIENT")
+    finally:
+        _restore_llm_client_env(prev)
+
+
+def test_get_llm_client_caches_the_same_instance():
+    prev = _reset_llm_client_env_and_cache()
+    try:
+        os.environ["LLM_CLIENT"] = "mock"
+        get_llm_client.cache_clear()
+        assert get_llm_client() is get_llm_client()
+    finally:
+        _restore_llm_client_env(prev)
+
+
+def test_get_llm_client_respects_ollama_timeout_env_var():
+    prev = _reset_llm_client_env_and_cache()
+    prev_timeout = os.environ.get("OLLAMA_TIMEOUT_SECONDS")
+    try:
+        os.environ["LLM_CLIENT"] = "ollama"
+        os.environ["OLLAMA_TIMEOUT_SECONDS"] = "77"
+        get_llm_client.cache_clear()
+        assert get_llm_client().timeout == 77.0
+    finally:
+        _restore_llm_client_env(prev)
+        if prev_timeout is not None:
+            os.environ["OLLAMA_TIMEOUT_SECONDS"] = prev_timeout
+        else:
+            os.environ.pop("OLLAMA_TIMEOUT_SECONDS", None)
+
+
+def test_get_llm_client_warns_and_falls_back_on_invalid_ollama_timeout():
+    prev = _reset_llm_client_env_and_cache()
+    prev_timeout = os.environ.get("OLLAMA_TIMEOUT_SECONDS")
+    try:
+        os.environ["LLM_CLIENT"] = "ollama"
+        os.environ["OLLAMA_TIMEOUT_SECONDS"] = "not-a-number"
+        get_llm_client.cache_clear()
+        stream = io.StringIO()
+        with contextlib.redirect_stderr(stream):
+            client = get_llm_client()
+        assert isinstance(client, OllamaLLMClient)  # doesn't raise -- only LLM_CLIENT itself does
+        assert "OLLAMA_TIMEOUT_SECONDS" in stream.getvalue()
+    finally:
+        _restore_llm_client_env(prev)
+        if prev_timeout is not None:
+            os.environ["OLLAMA_TIMEOUT_SECONDS"] = prev_timeout
+        else:
+            os.environ.pop("OLLAMA_TIMEOUT_SECONDS", None)
+
+
 # ---- Retry: transient/unparseable retries, permanent never retries -------
 
 class _FlakyThenOK:
@@ -736,28 +850,28 @@ def _empty_review_file():
 
 def test_run_llm_retries_transient_failure_then_succeeds():
     client = _FlakyThenOK()
-    findings, status = _run_llm(_empty_review_file(), client)
+    findings, status = _run_llm(_empty_review_file(), client, deadline=float("inf"))
     assert status == LLMStatus.SUCCESS
     assert client.call_count == 2
 
 
 def test_run_llm_does_not_retry_permanent_failure():
     client = _AlwaysPermanent()
-    findings, status = _run_llm(_empty_review_file(), client)
+    findings, status = _run_llm(_empty_review_file(), client, deadline=float("inf"))
     assert status == LLMStatus.INVALID_RESPONSE
     assert client.call_count == 1  # never retried
 
 
 def test_run_llm_exhausts_retries_on_persistent_timeout():
     client = MockLLMClient(fail=True)
-    findings, status = _run_llm(_empty_review_file(), client)
+    findings, status = _run_llm(_empty_review_file(), client, deadline=float("inf"))
     assert status == LLMStatus.TIMEOUT
     assert client.call_count == 2  # both attempts used
 
 
 def test_run_llm_retries_on_unparseable_json_then_succeeds():
     client = _FlakyJSON()
-    findings, status = _run_llm(_empty_review_file(), client)
+    findings, status = _run_llm(_empty_review_file(), client, deadline=float("inf"))
     assert status == LLMStatus.SUCCESS
     assert client.call_count == 2
 
@@ -823,6 +937,331 @@ def test_review_reports_first_failing_file_status_not_last():
     out = review(data, client=client)
     assert out["llm_status"] == "timeout"  # first failure (a.py), not last (b.py)
     assert client.call_count == 4
+
+
+# ---- Total LLM time budget: skip remaining files, cap per-call timeouts -
+
+class _LegacyTwoArgWrapper:
+    """Mirrors SanitizingClient (Static_checks_and_sec_rules/services/
+    submission_analysis.py) and eval/run_eval.py's
+    _ConnectionAwareOllamaClient exactly: a (system, user)-only
+    complete() with no kwarg passthrough. Used to confirm review()'s
+    budget feature degrades gracefully through a wrapper it can't pass
+    timeout= through, instead of crashing."""
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def complete(self, system, user):
+        return self._inner.complete(system, user)
+
+
+def test_review_works_through_a_system_user_only_wrapper():
+    wrapped = _LegacyTwoArgWrapper(MockLLMClient())
+    out = review(_load_input(), client=wrapped)
+    assert out["llm_status"] == "success"
+
+
+def test_accepts_timeout_kwarg_true_for_the_three_real_clients():
+    assert _accepts_timeout_kwarg(MockLLMClient()) is True
+    assert _accepts_timeout_kwarg(OllamaLLMClient()) is True
+    assert _accepts_timeout_kwarg(AnthropicLLMClient()) is True
+
+
+def test_accepts_timeout_kwarg_false_for_system_user_only_wrapper():
+    assert _accepts_timeout_kwarg(_LegacyTwoArgWrapper(MockLLMClient())) is False
+
+
+def test_accepts_timeout_kwarg_true_for_kwargs_based_wrapper():
+    class _KwargsWrapper:
+        def complete(self, system, user, **kwargs):
+            return "{}"
+
+    assert _accepts_timeout_kwarg(_KwargsWrapper()) is True
+
+
+class _FakeClock:
+    """A drop-in replacement for time.monotonic that only advances when
+    told to -- lets a test simulate call latency deterministically, with
+    no real sleeping."""
+
+    def __init__(self, start=0.0):
+        self.now = start
+
+    def __call__(self):
+        return self.now
+
+    def advance(self, seconds):
+        self.now += seconds
+
+
+@contextlib.contextmanager
+def _patched_monotonic(clock):
+    original = time.monotonic
+    time.monotonic = clock
+    try:
+        yield
+    finally:
+        time.monotonic = original
+
+
+class _ClockAdvancingClient:
+    """Stub LLMClient, (system, user)-only (deliberately not
+    timeout-aware, to isolate review()'s budget/aggregation logic from
+    the per-call clamping mechanism tested separately below): each
+    complete() call advances a shared fake clock by a fixed amount
+    (simulating that call's latency) and returns the next scripted
+    response or raises the next scripted exception, with no real
+    waiting."""
+
+    def __init__(self, clock, *, seconds_per_call, responses):
+        self._clock = clock
+        self._seconds_per_call = seconds_per_call
+        self._responses = list(responses)
+        self.call_count = 0
+
+    def complete(self, system, user):
+        self.call_count += 1
+        self._clock.advance(self._seconds_per_call)
+        item = self._responses.pop(0)
+        if isinstance(item, BaseException):
+            raise item
+        return item
+
+
+_TWO_FILE_DIFF = {
+    "submission_id": "sub_budget",
+    "source_type": "pull_request",
+    "repository": "org/repo",
+    "redaction_applied": True,
+    "files": [
+        {
+            "file_path": "a.py", "language": "python", "hunks": [],
+            # A static finding so _summarize has something to report --
+            # with zero findings anywhere it short-circuits to "No issues
+            # found," before ever reaching the SUCCESS/PARTIAL/other
+            # prefix logic these tests are actually checking.
+            "static_findings": [{
+                "finding_id": "sf_1", "tool": "bandit", "rule_id": "B101",
+                "category": "security", "message": "test finding",
+                "file_path": "a.py", "line": 1,
+            }],
+        },
+        {"file_path": "b.py", "language": "python", "hunks": [], "static_findings": []},
+    ],
+}
+
+
+def test_budget_exhausted_mid_diff_marks_remaining_file_partial():
+    clock = _FakeClock(start=1000.0)
+    client = _ClockAdvancingClient(
+        clock, seconds_per_call=60.0,
+        responses=['{"findings": []}'],  # only a.py gets a response
+    )
+    with _patched_monotonic(clock):
+        out = review(_TWO_FILE_DIFF, client=client, budget_seconds=60.0)
+
+    assert out["llm_status"] == "partial"
+    assert "Partial AI review" in out["summary"]
+    assert client.call_count == 1  # b.py was never attempted at all
+
+
+def test_overall_status_is_timeout_not_partial_when_nothing_succeeds():
+    """The scenario that motivated the no-success guard: file 1 times out
+    (exhausting both retry attempts and, in doing so, the whole budget),
+    so file 2 is skipped outright. Nothing ever succeeded, so this must
+    report plain TIMEOUT / "LLM unavailable" -- never "partial" -- even
+    though file 2's own per-file status was PARTIAL."""
+    clock = _FakeClock(start=1000.0)
+    client = _ClockAdvancingClient(
+        clock, seconds_per_call=40.0,
+        responses=[LLMTimeout("boom"), LLMTimeout("boom")],  # a.py's 2 attempts
+    )
+    with _patched_monotonic(clock):
+        out = review(_TWO_FILE_DIFF, client=client, budget_seconds=80.0)
+
+    assert out["llm_status"] == "timeout"
+    assert "LLM unavailable" in out["summary"]
+    assert "Partial" not in out["summary"]
+    assert client.call_count == 2  # both from a.py; b.py skipped, zero calls
+
+
+def test_overall_status_downgrades_partial_to_timeout_when_budget_exhausted_from_the_start():
+    """A budget that's already gone before the first file even starts: the
+    first (and only) per-file status is PARTIAL, but with zero successes
+    that must still be reported as TIMEOUT, not "partial"."""
+    client = MockLLMClient()  # never actually called -- budget is already gone
+    out = review(_TWO_FILE_DIFF, client=client, budget_seconds=-1.0)
+
+    assert out["llm_status"] == "timeout"
+    assert "LLM unavailable" in out["summary"]
+    assert client.call_count == 0
+
+
+def test_run_llm_passes_remaining_budget_as_timeout_to_supporting_client():
+    class _TimeoutRecordingClient:
+        def __init__(self):
+            self.recorded_timeouts = []
+
+        def complete(self, system, user, *, timeout=None):
+            self.recorded_timeouts.append(timeout)
+            return '{"findings": []}'
+
+    clock = _FakeClock(start=500.0)
+    client = _TimeoutRecordingClient()
+    with _patched_monotonic(clock):
+        findings, status = _run_llm(_empty_review_file(), client, deadline=clock.now + 42.0)
+
+    assert status == LLMStatus.SUCCESS
+    assert client.recorded_timeouts == [42.0]
+
+
+def test_run_llm_recomputes_remaining_timeout_on_each_retry():
+    clock = _FakeClock(start=0.0)
+
+    class _FailOnceThenOK:
+        def __init__(self):
+            self.recorded_timeouts = []
+            self._first = True
+
+        def complete(self, system, user, *, timeout=None):
+            self.recorded_timeouts.append(timeout)
+            clock.advance(10.0)
+            if self._first:
+                self._first = False
+                raise LLMTimeout("boom")
+            return '{"findings": []}'
+
+    client = _FailOnceThenOK()
+    with _patched_monotonic(clock):
+        findings, status = _run_llm(_empty_review_file(), client, deadline=100.0)
+
+    assert status == LLMStatus.SUCCESS
+    assert client.recorded_timeouts == [100.0, 90.0]  # shrinks after the first attempt's 10s
+
+
+@contextlib.contextmanager
+def _capture_urlopen_timeout(response_body=b'{"message": {"role": "assistant", "content": "{}"}}'):
+    captured = {}
+
+    class _FakeResponse:
+        def __init__(self, body):
+            self._body = body
+
+        def read(self):
+            return self._body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return False
+
+    def _urlopen(req, timeout=None):
+        captured["timeout"] = timeout
+        return _FakeResponse(response_body)
+
+    original = urllib.request.urlopen
+    urllib.request.urlopen = _urlopen
+    try:
+        yield captured
+    finally:
+        urllib.request.urlopen = original
+
+
+def test_ollama_client_clamps_to_the_smaller_of_its_own_timeout_and_the_passed_value():
+    with _capture_urlopen_timeout() as captured:
+        client = OllamaLLMClient(timeout=300.0)
+        client.complete("sys", "user", timeout=5.0)
+    assert captured["timeout"] == 5.0  # the smaller of the two wins
+
+
+def test_ollama_client_does_not_loosen_its_own_timeout_when_passed_value_is_larger():
+    with _capture_urlopen_timeout() as captured:
+        client = OllamaLLMClient(timeout=10.0)
+        client.complete("sys", "user", timeout=9999.0)
+    assert captured["timeout"] == 10.0  # client's own cap wins, never loosened
+
+
+def test_run_llm_logs_warning_on_permanent_error_without_traceback_or_prompt():
+    marker = "UNIQUE_PROMPT_MARKER_7f3a"
+    file = ReviewFile(
+        file_path="f.py", language="python",
+        hunks=[Hunk(hunk_id="h1", start_line=1, end_line=1, diff=f"@@ -1,1 +1,1 @@\n+{marker}")],
+        static_findings=[],
+    )
+    client = MockLLMClient(permanent_fail=True)
+
+    logger = logging.getLogger("llm_review.pipeline")
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setLevel(logging.WARNING)
+    logger.addHandler(handler)
+    prev_level = logger.level
+    logger.setLevel(logging.WARNING)
+    try:
+        _run_llm(file, client, deadline=float("inf"))
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(prev_level)
+
+    logged = stream.getvalue()
+    assert "LLMPermanentError" in logged
+    assert "Traceback" not in logged
+    assert marker not in logged
+
+
+def test_run_llm_logs_warning_on_transient_error_without_traceback_or_prompt():
+    marker = "UNIQUE_PROMPT_MARKER_9b1c"
+    file = ReviewFile(
+        file_path="f.py", language="python",
+        hunks=[Hunk(hunk_id="h1", start_line=1, end_line=1, diff=f"@@ -1,1 +1,1 @@\n+{marker}")],
+        static_findings=[],
+    )
+    client = MockLLMClient(fail=True)
+
+    logger = logging.getLogger("llm_review.pipeline")
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setLevel(logging.WARNING)
+    logger.addHandler(handler)
+    prev_level = logger.level
+    logger.setLevel(logging.WARNING)
+    try:
+        _run_llm(file, client, deadline=float("inf"))
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(prev_level)
+
+    logged = stream.getvalue()
+    assert logged.count("LLMTimeout") == 2  # both retry attempts logged
+    assert "Traceback" not in logged
+    assert marker not in logged
+
+
+# ---- _default_llm_review_budget: safe $LLM_REVIEW_BUDGET_SECONDS parsing -
+
+def test_default_llm_review_budget_falls_back_on_invalid_values():
+    prev = os.environ.get("LLM_REVIEW_BUDGET_SECONDS")
+    try:
+        os.environ.pop("LLM_REVIEW_BUDGET_SECONDS", None)
+        assert _default_llm_review_budget() == DEFAULT_LLM_REVIEW_BUDGET_SECONDS  # unset
+
+        os.environ["LLM_REVIEW_BUDGET_SECONDS"] = "45.5"
+        assert _default_llm_review_budget() == 45.5  # valid override still works
+
+        for bad in ("0", "-5", "inf", "-inf", "nan", "not-a-number"):
+            os.environ["LLM_REVIEW_BUDGET_SECONDS"] = bad
+            stream = io.StringIO()
+            with contextlib.redirect_stderr(stream):
+                value = _default_llm_review_budget()
+            assert value == DEFAULT_LLM_REVIEW_BUDGET_SECONDS, f"failed for {bad!r}"
+            assert "LLM_REVIEW_BUDGET_SECONDS" in stream.getvalue()
+    finally:
+        if prev is not None:
+            os.environ["LLM_REVIEW_BUDGET_SECONDS"] = prev
+        else:
+            os.environ.pop("LLM_REVIEW_BUDGET_SECONDS", None)
 
 
 # ---- _static_baseline: repo_diff_pipeline severity scheme + warning ------

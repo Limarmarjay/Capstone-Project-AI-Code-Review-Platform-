@@ -1,4 +1,6 @@
 [tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["llm_review/tests", "repo_diff_pipeline/tests", "tests"]
 testpaths = ["llm_review/tests", "repo_diff_pipeline/tests", "eval/tests"]
 
 # 4 files under llm_review/tests/ fail to collect: they still import
