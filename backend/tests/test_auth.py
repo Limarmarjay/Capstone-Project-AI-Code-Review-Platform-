@@ -39,3 +39,32 @@ def test_me_returns_current_user(client, auth):
     resp = client.get('/api/auth/me', headers=auth['headers'])
     assert resp.status_code == 200
     assert resp.get_json()['username'] == auth['user']['username']
+
+
+def test_signup_requires_username_and_password(client):
+    assert client.post('/api/auth/signup', json={'username': '', 'password': 'password123'}).status_code == 400
+    assert client.post('/api/auth/signup', json={'username': 'a', 'password': ''}).status_code == 400
+    assert client.post('/api/auth/signup', data='nope').status_code == 400
+
+
+def test_login_unknown_user_is_rejected(client):
+    response = client.post('/api/auth/login', json={'username': 'ghost', 'password': 'password123'})
+    assert response.status_code == 401
+
+
+def test_passwords_are_stored_hashed(client):
+    from app.db import db
+
+    client.post('/api/auth/signup', json={'username': 'hashme', 'password': 'password123'})
+    stored = db['user'].find_one({'username': 'hashme'})
+    assert 'password123' not in stored['password_hash']
+
+
+def test_me_for_deleted_user_returns_404(client, auth):
+    from bson import ObjectId
+
+    from app.db import db
+
+    db['user'].delete_one({'_id': ObjectId(auth['user']['id'])})
+    response = client.get('/api/auth/me', headers=auth['headers'])
+    assert response.status_code == 404

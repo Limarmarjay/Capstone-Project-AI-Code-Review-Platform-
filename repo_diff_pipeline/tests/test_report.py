@@ -72,3 +72,12 @@ def test_generate_summary_report_with_no_findings():
     summary = generate_summary_report([], None)
     assert summary.total_findings == 0
     assert "No issues found" in summary.text
+
+
+def test_summary_mentions_ai_failure():
+    from repo_diff_pipeline.models import AIReviewResult
+    from repo_diff_pipeline.report import generate_summary_report
+
+    summary = generate_summary_report([], AIReviewResult(summary='', error='timeout'))
+    assert '(AI review unavailable: timeout)' in summary.text
+    assert 'No issues found' in summary.text

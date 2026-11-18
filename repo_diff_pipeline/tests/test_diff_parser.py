@@ -59,3 +59,50 @@ def test_oversized_file_diff_raises():
         assert False, "expected DiffParseError"
     except DiffParseError:
         pass
+
+
+# --- additional coverage --------------------------------------------------------
+
+import pytest
+
+from repo_diff_pipeline import diff_parser
+from repo_diff_pipeline.models import ChangeType
+
+
+def test_garbage_hunk_raises_parse_error():
+    with pytest.raises(diff_parser.DiffParseError):
+        diff_parser.parse_diff('diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n')
+
+
+def test_too_many_files_rejected(monkeypatch):
+    monkeypatch.setattr(diff_parser, 'MAX_FILES', 1)
+    text = ''.join(
+        f"diff --git a/{n}.py b/{n}.py\n--- a/{n}.py\n+++ b/{n}.py\n@@ -1 +1 @@\n-a\n+b\n" for n in 'xy'
+    )
+    with pytest.raises(diff_parser.DiffParseError, match='exceeding limit'):
+        diff_parser.parse_diff(text)
+
+
+def test_rename_detected():
+    diff = diff_parser.parse_diff(
+        'diff --git a/old.py b/new.py\nsimilarity index 100%\nrename from old.py\nrename to new.py\n'
+    )
+    assert diff.files[0].change_type is ChangeType.RENAMED and diff.files[0].path == 'new.py'
+
+
+@pytest.mark.xfail(strict=True, reason="BUG: parse_diff uses lstrip('a/'), which strips a character "
+                   "set, so 'apple.py' becomes 'pple.py'. Should be removeprefix('a/').")
+def test_rename_preserves_old_path_starting_with_a():
+    diff = diff_parser.parse_diff(
+        'diff --git a/apple.py b/fruit.py\nsimilarity index 100%\nrename from apple.py\nrename to fruit.py\n'
+    )
+    assert diff.files[0].old_path == 'apple.py'
+
+
+def test_per_file_changed_line_limit_is_enforced(monkeypatch):
+    # Complements test_oversized_file_diff_raises, which does not reach the per-file counter.
+    monkeypatch.setattr(diff_parser, 'MAX_HUNK_LINES_PER_FILE', 2)
+    with pytest.raises(diff_parser.DiffParseError, match='exceeds'):
+        diff_parser.parse_diff(
+            "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -0,0 +1,3 @@\n+1\n+2\n+3\n"
+        )

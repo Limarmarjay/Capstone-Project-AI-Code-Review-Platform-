@@ -48,3 +48,9 @@ def test_mixed_diff_rejected_even_with_python_files_present():
     assert reason is not None
     assert "README.md" in reason
     assert "config.yaml" in reason
+
+
+def test_nul_byte_rejected_as_binary():
+    from repo_diff_pipeline.validation import validate_input
+
+    assert 'binary' in validate_input('diff --git a b\x00')
