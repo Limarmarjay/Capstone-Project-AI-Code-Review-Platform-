@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { ChangeEvent } from 'react'
+import type { ChangeEvent, CSSProperties } from 'react'
 import {
   connectGithub,
   createSubmission,
@@ -23,6 +23,19 @@ const SEVERITY_ORDER: Record<string, number> = {
   low: 3,
 }
 
+function scoreTier(score: number): 'good' | 'okay' | 'poor' {
+  return score >= 80 ? 'good' : score >= 50 ? 'okay' : 'poor'
+}
+
+const SEVERITY_LEVELS = ['critical', 'high', 'medium', 'low'] as const
+
+const SEVERITY_DOT: Record<string, string> = {
+  critical: 'var(--critical)',
+  high: 'var(--high)',
+  medium: 'var(--medium)',
+  low: 'var(--low)',
+}
+
 function SubmissionResults({ submission }: { submission: Submission }) {
   const handleDownloadReport = () => {
     if (!submission.report) return
@@ -37,24 +50,29 @@ function SubmissionResults({ submission }: { submission: Submission }) {
 
   if (!submission.review) return null
 
+  const severityCounts = SEVERITY_LEVELS.map(
+    (level) => [level, submission.review!.findings.filter((f) => f.severity === level).length] as const,
+  ).filter(([, count]) => count > 0)
+
   return (
     <div className="analysis-results">
       <div className="results-header">
-        <div>
-          <h3>Review Results</h3>
-          <p className="results-summary">{submission.review.summary}</p>
+        <div className="results-title">
+          <div
+            className="score-ring"
+            data-tier={scoreTier(submission.review.overall_score)}
+            style={{ '--score': submission.review.overall_score } as CSSProperties}
+            aria-hidden="true"
+          >
+            {submission.review.overall_score}
+          </div>
+          <div>
+            <h3>Review Results</h3>
+            <p className="results-summary">{submission.review.summary}</p>
+          </div>
         </div>
         <div className="results-header-actions">
-          <span
-            className="score-badge"
-            data-tier={
-              submission.review.overall_score >= 80
-                ? 'good'
-                : submission.review.overall_score >= 50
-                  ? 'okay'
-                  : 'poor'
-            }
-          >
+          <span className="score-badge" data-tier={scoreTier(submission.review.overall_score)}>
             Score: {submission.review.overall_score}/100
           </span>
           {submission.report && (
@@ -64,6 +82,16 @@ function SubmissionResults({ submission }: { submission: Submission }) {
           )}
         </div>
       </div>
+
+      {severityCounts.length > 0 && (
+        <ul className="severity-summary" aria-label="Findings by severity">
+          {severityCounts.map(([level, count]) => (
+            <li key={level} style={{ '--dot': SEVERITY_DOT[level] } as CSSProperties}>
+              <b>{count}</b> {level}
+            </li>
+          ))}
+        </ul>
+      )}
 
       {Object.entries(submission.scan_issues ?? {}).map(([path, issue]) => (
         <p key={path} className="scan-issue">
@@ -235,7 +263,16 @@ function GithubPanel({ token, onResult }: { token: string; onResult: (submission
     }
   }
 
-  if (connected === null) return null
+  if (connected === null) {
+    return (
+      <div className="github-section github-loading" role="status" aria-live="polite">
+        <span className="skeleton skeleton-label" />
+        <span className="skeleton skeleton-input" />
+        <span className="skeleton skeleton-button" />
+        <span className="sr-only">Checking GitHub connection…</span>
+      </div>
+    )
+  }
 
   if (!connected) {
     return (
@@ -247,6 +284,9 @@ function GithubPanel({ token, onResult }: { token: string; onResult: (submission
             value={patToken}
             onChange={(e) => setPatToken(e.target.value)}
             placeholder="ghp_..."
+            autoComplete="off"
+            data-1p-ignore
+            data-lpignore="true"
           />
         </label>
         <button
@@ -325,8 +365,14 @@ function Dashboard() {
   const { user, token, logout } = useAuth()
   const [activeTab, setActiveTab] = useState<TabKey>('patch')
   const [result, setResult] = useState<Submission | null>(null)
+  const [githubVisited, setGithubVisited] = useState(false)
 
   if (!token) return null
+
+  const selectTab = (key: TabKey) => {
+    setActiveTab(key)
+    if (key === 'github') setGithubVisited(true)
+  }
 
   return (
     <div className="dashboard">
@@ -360,7 +406,7 @@ function Dashboard() {
               role="tab"
               aria-selected={activeTab === tab.key}
               className="tab-button"
-              onClick={() => setActiveTab(tab.key)}
+              onClick={() => selectTab(tab.key)}
             >
               {tab.label}
             </button>
@@ -386,10 +432,31 @@ function Dashboard() {
               onResult={setResult}
             />
           )}
-          {activeTab === 'github' && <GithubPanel token={token} onResult={setResult} />}
+          {githubVisited && (
+            <div hidden={activeTab !== 'github'}>
+              <GithubPanel token={token} onResult={setResult} />
+            </div>
+          )}
         </div>
 
-        {result && <SubmissionResults submission={result} />}
+        {result ? (
+          <SubmissionResults submission={result} />
+        ) : (
+          <ol className="steps">
+            <li>
+              <strong>Add your changes</strong>
+              <span>Upload a patch or diff, or pick a pull request.</span>
+            </li>
+            <li>
+              <strong>We analyze them</strong>
+              <span>Static checks and an AI reviewer run together.</span>
+            </li>
+            <li>
+              <strong>Review the findings</strong>
+              <span>Get a score, ranked issues and suggested fixes.</span>
+            </li>
+          </ol>
+        )}
       </main>
     </div>
   )
