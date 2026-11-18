@@ -1,4 +1,6 @@
-const API_BASE_URL = 'http://127.0.0.1:5002/api'
+// VITE_API_URL overrides the backend address at build time. Otherwise production builds use the
+// same-origin /api (frontend + backend in one Vercel project) and dev falls back to the local Flask server.
+const API_BASE_URL = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/+$/, '') || (import.meta.env.PROD ? '/api' : 'http://127.0.0.1:5002/api')
 
 interface AuthResponse {
   token: string

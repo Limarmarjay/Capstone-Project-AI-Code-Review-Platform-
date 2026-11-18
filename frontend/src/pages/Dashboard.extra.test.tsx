@@ -281,6 +281,39 @@ describe('Dashboard GitHub panel edge cases', () => {
     await userEvent.setup().click(screen.getByRole('tab', { name: /Connect GitHub/ }))
   }
 
+  it('shows a loading placeholder (not a blank panel) while the status check is in flight', async () => {
+    let resolve!: (v: { connected: boolean }) => void
+    vi.mocked(api.getGithubStatus).mockReturnValue(new Promise((r) => (resolve = r)))
+    await openGithub()
+
+    expect(screen.getByRole('status')).toHaveTextContent('Checking GitHub connection')
+    resolve({ connected: false })
+    expect(await screen.findByLabelText(/GitHub Personal Access Token/)).toBeInTheDocument()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('does not re-check GitHub when you switch away from the tab and come back', async () => {
+    vi.mocked(api.getGithubStatus).mockResolvedValue({ connected: false })
+    await openGithub()
+    await screen.findByLabelText(/GitHub Personal Access Token/)
+
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('tab', { name: /Upload Patch/ }))
+    expect(screen.getByLabelText(/GitHub Personal Access Token/)).not.toBeVisible() // kept mounted, but hidden
+    await user.click(screen.getByRole('tab', { name: /Connect GitHub/ }))
+
+    expect(await screen.findByLabelText(/GitHub Personal Access Token/)).toBeInTheDocument()
+    expect(api.getGithubStatus).toHaveBeenCalledTimes(1)
+  })
+
+  it('opts the token field out of password-manager autofill', async () => {
+    vi.mocked(api.getGithubStatus).mockResolvedValue({ connected: false })
+    await openGithub()
+    const input = await screen.findByLabelText(/GitHub Personal Access Token/)
+    expect(input).toHaveAttribute('autocomplete', 'off')
+    expect(input).toHaveAttribute('data-1p-ignore')
+  })
+
   it('treats a failed status check as "not connected"', async () => {
     vi.mocked(api.getGithubStatus).mockRejectedValue(new Error('offline'))
     await openGithub()
