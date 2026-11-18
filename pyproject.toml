@@ -1,3 +1,25 @@
+[project]
+name = "ai-code-review-platform"
+version = "0.1.0"
+requires-python = ">=3.11"
+# Runtime deps for the Flask backend. Vercel installs from here (pyproject.toml
+# takes priority over requirements.txt). Keep in sync with backend/requirements.txt.
+dependencies = [
+    "Flask==3.1.0",
+    "flask-cors==5.0.0",
+    "pymongo==4.10.1",
+    "PyJWT==2.10.1",
+    "requests==2.32.3",
+    "unidiff==0.7.5",
+    "bandit==1.9.4",
+    "anthropic==1.7.0",
+    "cryptography==50.0.2",
+    "python-dotenv==1.2.4",
+]
+
+[tool.uv]
+package = false
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["llm_review/tests", "repo_diff_pipeline/tests", "tests", "eval/tests"]
