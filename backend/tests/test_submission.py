@@ -237,3 +237,169 @@ def test_get_one_not_found_for_other_users_submission(client, auth):
 
     resp = client.get(f"/api/submission/{created['_id']}", headers=other_headers)
     assert resp.status_code == 404
+
+
+# --- additional branch coverage -------------------------------------------
+
+def test_non_object_body_is_rejected(client, auth):
+    response = client.post('/api/submission', json=['x'], headers=auth['headers'])
+    assert response.status_code == 400
+
+
+def test_unparseable_diff_is_blocked_with_reason(client, auth, monkeypatch):
+    from app.routes import submission as route
+    from repo_diff_pipeline.diff_parser import DiffParseError
+
+    def boom(_text):
+        raise DiffParseError('bad hunk header')
+
+    monkeypatch.setattr(route, 'parse_diff', boom)
+    response = client.post(
+        '/api/submission',
+        json={'submission_type': 'diff', 'content': PYTHON_DIFF, 'filename': 'a.diff'},
+        headers=auth['headers'],
+    )
+    assert response.status_code == 400
+    assert response.get_json()['error'] == 'bad hunk header'
+    assert db['review'].count_documents({}) == 0
+
+
+def test_analysis_error_marks_review_failed(client, auth, monkeypatch):
+    from app.routes import submission as route
+
+    def reject(*_a, **_k):
+        raise route.SubmissionAnalysisError('nope')
+
+    monkeypatch.setattr(route, 'analyze_parsed_submission', reject)
+    response = client.post(
+        '/api/submission',
+        json={'submission_type': 'patch', 'content': PYTHON_DIFF},
+        headers=auth['headers'],
+    )
+    body = response.get_json()
+    assert response.status_code == 400
+    assert body['error'] == 'Submission analysis failed.'
+    review = db['review'].find_one({'_id': ObjectId(body['review_id'])})
+    assert review['status'] == 'failed'
+    assert review['completed_at']
+
+
+def test_unexpected_analysis_error_returns_500(client, auth, monkeypatch):
+    from app.routes import submission as route
+
+    def explode(*_a, **_k):
+        raise RuntimeError('kaboom')
+
+    monkeypatch.setattr(route, 'analyze_parsed_submission', explode)
+    response = client.post(
+        '/api/submission',
+        json={'submission_type': 'patch', 'content': PYTHON_DIFF},
+        headers=auth['headers'],
+    )
+    body = response.get_json()
+    assert response.status_code == 500
+    assert 'kaboom' not in str(body)  # internals must not leak
+    assert db['review'].find_one({'_id': ObjectId(body['review_id'])})['status'] == 'failed'
+
+
+def test_get_one_invalid_id(client, auth):
+    assert client.get('/api/submission/xyz', headers=auth['headers']).status_code == 400
+
+
+def test_get_one_returns_own_submission(client, auth):
+    created = client.post(
+        '/api/submission',
+        json={'submission_type': 'patch', 'content': PYTHON_DIFF},
+        headers=auth['headers'],
+    ).get_json()
+    response = client.get(f"/api/submission/{created['_id']}", headers=auth['headers'])
+    assert response.status_code == 200
+    assert response.get_json()['_id'] == created['_id']
+
+
+def test_filename_is_sanitised_for_analysis(client, auth, monkeypatch):
+    from app.routes import submission as route
+
+    seen = {}
+    real = route.analyze_parsed_submission
+
+    def spy(parsed, **kwargs):
+        seen.update(kwargs)
+        return real(parsed, **kwargs)
+
+    monkeypatch.setattr(route, 'analyze_parsed_submission', spy)
+    client.post(
+        '/api/submission',
+        json={'submission_type': 'patch', 'content': PYTHON_DIFF, 'filename': '../../etc/passwd'},
+        headers=auth['headers'],
+    )
+    assert seen['filename'] == 'etc_passwd' or '/' not in seen['filename']
+
+
+def test_missing_filename_falls_back_to_default(client, auth, monkeypatch):
+    from app.routes import submission as route
+
+    seen = {}
+    real = route.analyze_parsed_submission
+    monkeypatch.setattr(
+        route, 'analyze_parsed_submission',
+        lambda parsed, **kw: (seen.update(kw), real(parsed, **kw))[1],
+    )
+    client.post(
+        '/api/submission',
+        json={'submission_type': 'patch', 'content': PYTHON_DIFF},
+        headers=auth['headers'],
+    )
+    assert seen['filename'] == 'submission.patch'
+
+
+# --- pure helpers -----------------------------------------------------------
+
+def test_report_text_with_no_findings():
+    from app.routes.submission import _generate_report_text
+
+    text = _generate_report_text({'overall_score': 100, 'summary': 'Clean.', 'findings': []})
+    assert 'Overall Score: 100/100' in text
+    assert 'No issues found.' in text
+
+
+def test_report_text_lists_severity_counts_and_details():
+    from app.routes.submission import _generate_report_text
+
+    text = _generate_report_text({
+        'overall_score': 40,
+        'summary': 'Bad.',
+        'findings': [
+            {'severity': 'high', 'title': 'Shell injection', 'file_path': 'a.py', 'line': 3,
+             'explanation': 'why', 'suggested_fix': 'fix it'},
+            {'severity': 'low', 'category': 'code_style', 'file_path': 'b.py', 'line': 1},
+        ],
+    })
+    assert 'Findings (2 total):' in text
+    assert '- high: 1' in text and '- low: 1' in text
+    assert '- critical' not in text
+    assert '[HIGH] Shell injection — a.py:3' in text
+    assert 'Suggested fix: fix it' in text
+    assert 'Code Style' in text  # title derived from category
+
+
+def test_severity_counts_ignores_unknown_levels():
+    from app.routes.submission import _severity_counts
+
+    counts = _severity_counts([{'severity': 'high'}, {'severity': 'weird'}, {}])
+    assert counts == {'critical': 0, 'high': 1, 'medium': 0, 'low': 0}
+
+
+def test_infer_tool():
+    from app.routes.submission import _infer_tool
+
+    assert _infer_tool({'static_finding_ids': ['bandit:B602:risky.py:3']}) == 'bandit'
+    assert _infer_tool({'static_finding_ids': ['plain']}) == 'plain'
+    assert _infer_tool({}) is None
+
+
+def test_inline_comment_body_unknown_severity():
+    from app.routes.submission import _inline_comment_body
+
+    body = _inline_comment_body({'category': 'null_handling'})
+    assert body == '[UNKNOWN] Null Handling'

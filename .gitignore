@@ -16,3 +16,9 @@ __pycache__/
 eval/results/
 .vscode/settings.json
 backend/pyrightconfig.json
+
+# coverage output
+.coverage
+htmlcov/
+coverage/
+.coveragerc
